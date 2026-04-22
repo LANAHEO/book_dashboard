@@ -9,8 +9,8 @@ const HOST = process.env.HOST || "0.0.0.0";
 const PORT = Number(process.env.PORT || 3000);
 const PUBLIC_DIR = path.join(__dirname, "public");
 
-const ONE_HOUR = 60 * 60 * 1000;
-const HALF_HOUR = 30 * 60 * 1000;
+const FIVE_MINUTES = 5 * 60 * 1000;
+const TEN_MINUTES = 10 * 60 * 1000;
 const REQUEST_TIMEOUT_MS = 15_000;
 
 const USER_AGENT =
@@ -53,7 +53,7 @@ const SOURCES = [
     name: "종합 주간 베스트",
     typeLabel: "주간",
     realtime: false,
-    ttlMs: HALF_HOUR,
+    ttlMs: TEN_MINUTES,
     sourceUrl: "https://store.kyobobook.co.kr/bestseller/total/weekly",
     load: () =>
       fetchKyoboList("total", {
@@ -69,7 +69,7 @@ const SOURCES = [
     name: "온라인 베스트 일간",
     typeLabel: "일간",
     realtime: false,
-    ttlMs: HALF_HOUR,
+    ttlMs: TEN_MINUTES,
     sourceUrl: "https://store.kyobobook.co.kr/bestseller/online/daily",
     load: () =>
       fetchKyoboList("online", {
@@ -87,7 +87,7 @@ const SOURCES = [
     name: "온라인 베스트 주간",
     typeLabel: "주간",
     realtime: false,
-    ttlMs: HALF_HOUR,
+    ttlMs: TEN_MINUTES,
     sourceUrl: "https://store.kyobobook.co.kr/bestseller/online/weekly",
     load: () =>
       fetchKyoboList("online", {
@@ -105,7 +105,7 @@ const SOURCES = [
     name: "온라인 베스트 월간",
     typeLabel: "월간",
     realtime: false,
-    ttlMs: HALF_HOUR,
+    ttlMs: TEN_MINUTES,
     sourceUrl: "https://store.kyobobook.co.kr/bestseller/online/monthly",
     load: () =>
       fetchKyoboList("online", {
@@ -121,9 +121,9 @@ const SOURCES = [
     id: "kyobo-realtime",
     storeId: "kyobo",
     name: "실시간 베스트",
-    typeLabel: "1시간 주기",
+    typeLabel: "5분 주기",
     realtime: true,
-    ttlMs: ONE_HOUR,
+    ttlMs: FIVE_MINUTES,
     sourceUrl: "https://store.kyobobook.co.kr/bestseller/realtime",
     load: () =>
       fetchKyoboList("realtime", {
@@ -137,7 +137,7 @@ const SOURCES = [
     name: "국내도서 종합 베스트",
     typeLabel: "종합",
     realtime: false,
-    ttlMs: HALF_HOUR,
+    ttlMs: TEN_MINUTES,
     sourceUrl: "https://www.yes24.com/product/category/bestseller?categoryNumber=001",
     load: () =>
       fetchYes24List(
@@ -148,9 +148,9 @@ const SOURCES = [
     id: "yes24-realtime",
     storeId: "yes24",
     name: "실시간 베스트",
-    typeLabel: "1시간 주기",
+    typeLabel: "5분 주기",
     realtime: true,
-    ttlMs: ONE_HOUR,
+    ttlMs: FIVE_MINUTES,
     sourceUrl:
       "https://www.yes24.com/product/category/realtimebestseller?categoryNumber=001",
     load: () =>
@@ -164,7 +164,7 @@ const SOURCES = [
     name: "일별 베스트셀러",
     typeLabel: "일별",
     realtime: false,
-    ttlMs: HALF_HOUR,
+    ttlMs: TEN_MINUTES,
     sourceUrl:
       "https://www.yes24.com/product/category/daybestseller?categoryNumber=001",
     load: () =>
@@ -178,7 +178,7 @@ const SOURCES = [
     name: "주간 베스트",
     typeLabel: "주간",
     realtime: false,
-    ttlMs: HALF_HOUR,
+    ttlMs: TEN_MINUTES,
     sourceUrl:
       "https://www.aladin.co.kr/shop/common/wbest.aspx?BranchType=1&BestType=Bestseller",
     load: () =>
@@ -190,9 +190,9 @@ const SOURCES = [
     id: "aladin-now",
     storeId: "aladin",
     name: "지금 베스트",
-    typeLabel: "1시간 주기",
+    typeLabel: "5분 주기",
     realtime: true,
-    ttlMs: ONE_HOUR,
+    ttlMs: FIVE_MINUTES,
     sourceUrl:
       "https://www.aladin.co.kr/shop/common/wbest.aspx?BranchType=1&BestType=NowBest",
     load: () =>
@@ -379,6 +379,20 @@ function normalizeUrl(url, base) {
   }
 }
 
+function buildKyoboImageUrl(item) {
+  const directImage = normalizeUrl(item.imgPath, "https://contents.kyobobook.co.kr");
+  if (directImage) {
+    return directImage;
+  }
+
+  const productCode = String(item.cmdtCode || "").trim();
+  if (!productCode) {
+    return "";
+  }
+
+  return `https://contents.kyobobook.co.kr/sih/fit-in/300x0/pdt/${productCode}.jpg`;
+}
+
 function dedupeByRank(items) {
   const seen = new Set();
   return items.filter((item) => {
@@ -403,9 +417,9 @@ function mapKyoboItem(item) {
     meta: makeMeta([item.chrcName, item.pbcmName, publishedAt]),
     secondary: makeMeta([price, discount, previousRank]),
     link: item.saleCmdtid
-      ? `https://store.kyobobook.co.kr/detail/${item.saleCmdtid}`
+      ? `https://product.kyobobook.co.kr/detail/${item.saleCmdtid}`
       : "",
-    image: normalizeUrl(item.imgPath, "https://contents.kyobobook.co.kr")
+    image: buildKyoboImageUrl(item)
   };
 }
 
@@ -569,9 +583,7 @@ function buildPayload(definition, result, options = {}) {
     realtime: definition.realtime,
     sourceUrl: definition.sourceUrl,
     updatedAt: now.toISOString(),
-    nextRefreshAt: definition.realtime
-      ? new Date(now.getTime() + definition.ttlMs).toISOString()
-      : null,
+    nextRefreshAt: new Date(now.getTime() + definition.ttlMs).toISOString(),
     sourceStamp: result.sourceStamp || "",
     itemCount: result.items.length,
     items: result.items,
@@ -700,7 +712,10 @@ function getMimeType(filePath) {
 }
 
 async function serveStatic(response, requestPath) {
-  const normalizedPath = requestPath === "/" ? "/index.html" : requestPath;
+  const normalizedPath =
+    requestPath === "/" || requestPath === "/main" || requestPath === "/main/"
+      ? "/index.html"
+      : requestPath;
   const resolvedPath = path.resolve(PUBLIC_DIR, `.${normalizedPath}`);
 
   if (!resolvedPath.startsWith(PUBLIC_DIR)) {
@@ -731,18 +746,38 @@ async function refreshRealtimeSources() {
   );
 }
 
-function startRealtimeScheduler() {
+async function refreshStandardSources() {
+  const standardIds = SOURCES.filter((source) => !source.realtime).map((source) => source.id);
+  await Promise.all(
+    standardIds.map((id) =>
+      loadSource(id, { force: true }).catch((error) => {
+        console.error(`[scheduler] ${id}:`, error);
+      })
+    )
+  );
+}
+
+function startSourceSchedulers() {
   setTimeout(() => {
     refreshRealtimeSources().catch((error) => {
-      console.error("[scheduler] initial refresh failed:", error);
+      console.error("[scheduler] initial realtime refresh failed:", error);
+    });
+    refreshStandardSources().catch((error) => {
+      console.error("[scheduler] initial standard refresh failed:", error);
     });
   }, 1000);
 
   setInterval(() => {
     refreshRealtimeSources().catch((error) => {
-      console.error("[scheduler] refresh failed:", error);
+      console.error("[scheduler] realtime refresh failed:", error);
     });
-  }, ONE_HOUR);
+  }, FIVE_MINUTES);
+
+  setInterval(() => {
+    refreshStandardSources().catch((error) => {
+      console.error("[scheduler] standard refresh failed:", error);
+    });
+  }, TEN_MINUTES);
 }
 
 const server = http.createServer(async (request, response) => {
@@ -788,7 +823,7 @@ const server = http.createServer(async (request, response) => {
   await serveStatic(response, url.pathname);
 });
 
-startRealtimeScheduler();
+startSourceSchedulers();
 
 server.listen(PORT, HOST, () => {
   console.log(`Book ranking dashboard ready at http://${HOST}:${PORT}`);

@@ -14,20 +14,21 @@
       <header class="masthead">
         <div class="masthead-copy">
           <p class="eyebrow">Book Ranking Monitor</p>
-          <h1>교보문고 · 예스24 · 알라딘 도서 순위 대시보드</h1>
+          <div class="masthead-title-line">
+            <h1>교보문고 · 예스24 · 알라딘 도서 순위 대시보드</h1>
+            <div class="update-badge" id="auto-refresh-badge" data-badge-state="idle" aria-live="polite">
+              <span class="update-badge-orbit" aria-hidden="true"></span>
+              <span class="update-badge-label" id="auto-refresh-text">자동 갱신 준비 중</span>
+            </div>
+          </div>
           <p class="masthead-note">
             교보문고, 예스24, 알라딘의 주요 베스트셀러 목록을 한 화면에서 확인합니다.
-            실시간 목록 3개는 1시간 주기 규칙에 맞춰 다시 수집됩니다.
           </p>
         </div>
         <div class="masthead-status">
           <div class="status-card">
-            <span class="status-label">마지막 대시보드 갱신</span>
+            <span class="status-label">최근 업데이트 시간</span>
             <strong id="generated-at">불러오는 중...</strong>
-          </div>
-          <div class="status-card">
-            <span class="status-label">실시간 카드</span>
-            <strong>3개</strong>
           </div>
         </div>
       </header>
@@ -38,17 +39,11 @@
           <input
             id="search-input"
             type="search"
-            placeholder="예: 프로젝트 헤일메리, 클로드 코드, 최태성"
+            placeholder="도서를 검색합니다."
             autocomplete="off"
           >
         </label>
         <div class="store-filter-group" id="store-filters" aria-label="Store filters"></div>
-        <div class="toolbar-actions">
-          <button type="button" class="action-button" data-refresh="all">전체 새로고침</button>
-          <button type="button" class="action-button action-button-soft" data-refresh="realtime">
-            실시간만 갱신
-          </button>
-        </div>
       </section>
 
       <section class="summary-strip" id="summary-strip">
