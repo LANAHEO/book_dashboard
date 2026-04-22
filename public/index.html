@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>도서 순위 대시보드</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <div class="background-glow background-glow-a"></div>
+    <div class="background-glow background-glow-b"></div>
+
+    <div class="shell">
+      <header class="masthead">
+        <div class="masthead-copy">
+          <p class="eyebrow">Book Ranking Monitor</p>
+          <h1>교보문고 · 예스24 · 알라딘 도서 순위 대시보드</h1>
+          <p class="masthead-note">
+            교보문고, 예스24, 알라딘의 주요 베스트셀러 목록을 한 화면에서 확인합니다.
+            실시간 목록 3개는 1시간 주기 규칙에 맞춰 다시 수집됩니다.
+          </p>
+        </div>
+        <div class="masthead-status">
+          <div class="status-card">
+            <span class="status-label">마지막 대시보드 갱신</span>
+            <strong id="generated-at">불러오는 중...</strong>
+          </div>
+          <div class="status-card">
+            <span class="status-label">실시간 카드</span>
+            <strong>3개</strong>
+          </div>
+        </div>
+      </header>
+
+      <section class="toolbar">
+        <label class="search-box" for="search-input">
+          <span>제목, 저자, 출판사 검색</span>
+          <input
+            id="search-input"
+            type="search"
+            placeholder="예: 프로젝트 헤일메리, 클로드 코드, 최태성"
+            autocomplete="off"
+          >
+        </label>
+        <div class="store-filter-group" id="store-filters" aria-label="Store filters"></div>
+        <div class="toolbar-actions">
+          <button type="button" class="action-button" data-refresh="all">전체 새로고침</button>
+          <button type="button" class="action-button action-button-soft" data-refresh="realtime">
+            실시간만 갱신
+          </button>
+        </div>
+      </section>
+
+      <section class="summary-strip" id="summary-strip">
+        <span id="summary-text">데이터를 준비하고 있습니다.</span>
+      </section>
+
+      <main id="dashboard" class="dashboard" aria-live="polite"></main>
+    </div>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

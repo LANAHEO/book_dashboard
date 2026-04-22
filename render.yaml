@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: book-ranking-dashboard
+    runtime: node
+    region: singapore
+    plan: starter
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/health
+    autoDeployTrigger: commit

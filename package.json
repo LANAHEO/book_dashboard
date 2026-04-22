@@ -1,0 +1,12 @@
+{
+  "name": "book-ranking-dashboard",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Local dashboard for Kyobo, YES24, and Aladin bestseller rankings.",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node server.js"
+  }
+}
