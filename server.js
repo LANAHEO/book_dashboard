@@ -521,7 +521,7 @@ function parseAladinPublisher(authorLine) {
   }
 
   const parts = text
-    .split("|")
+    .split("·")
     .map((part) => part.trim())
     .filter(Boolean);
 
