@@ -22,6 +22,8 @@ const KYOBO_API_KEY =
   "_uV_zR5yMFoizFJ-exMkbYdExhGnI9L-C6mJOkHGw_XH2cq-vTBomkyhSFPhzL1e_" +
   "KDxiKL12lmOLwTW76XGFYk21Rv9Wwg0KHzk1v0pk2k_N6GBrrlkIxhB01ASoKU42w" +
   "Fghx0O.LovE487VgIlkk_1NZcEp_w";
+const WATCH_PUBLISHER_NAME = "상상스퀘어";
+const WATCH_PUBLISHER_KEY = normalizePublisherKey(WATCH_PUBLISHER_NAME);
 
 const cache = new Map();
 
@@ -405,17 +407,31 @@ function dedupeByRank(items) {
   });
 }
 
+function normalizePublisherKey(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "");
+}
+
+function isWatchedPublisher(value) {
+  const key = normalizePublisherKey(value);
+  return key ? key.includes(WATCH_PUBLISHER_KEY) : false;
+}
+
 function mapKyoboItem(item) {
   const publishedAt = formatCompactDate(item.rlseDate || item.ppbkRlseDate);
   const price = item.sapr ? `${formatNumber(item.sapr)}원` : "";
   const discount = item.dscnRate ? `${item.dscnRate}% 할인` : "";
   const previousRank = item.frmrRnkn > 0 ? `전회 ${item.frmrRnkn}위` : "";
+  const publisher = String(item.pbcmName || "").trim();
 
   return {
     rank: toNumber(item.prstRnkn || item.rowNum),
     title: String(item.cmdtName || "").trim(),
-    meta: makeMeta([item.chrcName, item.pbcmName, publishedAt]),
+    meta: makeMeta([item.chrcName, publisher, publishedAt]),
     secondary: makeMeta([price, discount, previousRank]),
+    publisher,
     link: item.saleCmdtid
       ? `https://product.kyobobook.co.kr/detail/${item.saleCmdtid}`
       : "",
@@ -476,6 +492,7 @@ function mapYes24Block(block) {
     title,
     meta: makeMeta([author, publisher, publishedAt]),
     secondary: salePrice ? `${formatNumber(salePrice)}원` : "",
+    publisher,
     link,
     image: normalizeUrl(
       extract(block, /<img[^>]+data-original="([^"]+)"/) ||
@@ -495,6 +512,20 @@ async function fetchYes24List(url) {
     items: dedupeByRank(blocks.map(mapYes24Block).filter(Boolean)).slice(0, 20),
     sourceStamp: ""
   };
+}
+
+function parseAladinPublisher(authorLine) {
+  const text = stripTags(authorLine);
+  if (!text) {
+    return "";
+  }
+
+  const parts = text
+    .split("|")
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  return parts.length >= 2 ? parts[1] : "";
 }
 
 function mapAladinBlock(block) {
@@ -533,6 +564,7 @@ function mapAladinBlock(block) {
   const salesPoint = stripTags(
     extract(statsLine, /<span class="sales_point">\s*([^<]+)\s*<\/span>/)
   );
+  const publisher = parseAladinPublisher(authorLine);
 
   return {
     rank,
@@ -542,6 +574,7 @@ function mapAladinBlock(block) {
       price,
       salesPoint ? `세일즈포인트 ${salesPoint}` : ""
     ]),
+    publisher,
     link: normalizeUrl(
       extract(block, /<a href="([^"]+)" class="bo3">/),
       "https://www.aladin.co.kr"
@@ -590,6 +623,34 @@ function buildPayload(definition, result, options = {}) {
     warning: options.warning || result.warning || "",
     error: options.error || "",
     stale: Boolean(options.stale)
+  };
+}
+
+function buildPublisherAlerts(sections) {
+  const items = sections.flatMap((section) =>
+    section.lists.flatMap((list) =>
+      list.items
+        .filter((item) => isWatchedPublisher(item.publisher))
+        .map((item) => ({
+          publisherName: WATCH_PUBLISHER_NAME,
+          storeId: section.id,
+          storeName: section.name,
+          listId: list.id,
+          listName: list.name,
+          rank: item.rank,
+          title: item.title,
+          link: item.link,
+          image: item.image,
+          publisher: item.publisher || ""
+        }))
+    )
+  );
+
+  return {
+    publisherName: WATCH_PUBLISHER_NAME,
+    totalCount: items.length,
+    uniqueTitleCount: new Set(items.map((item) => `${item.title}::${item.publisher}`)).size,
+    items
   };
 }
 
@@ -657,7 +718,8 @@ async function buildDashboard(forceIds = []) {
 
   return {
     generatedAt: new Date().toISOString(),
-    sections
+    sections,
+    alerts: buildPublisherAlerts(sections)
   };
 }
 
