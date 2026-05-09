@@ -179,14 +179,22 @@ function renderCard(list) {
     items.length > 0
       ? `<ol class="rank-list">${items.map(renderItem).join("")}</ol>`
       : '<div class="panel-empty">현재 검색어와 일치하는 책이 없습니다.</div>';
+  const countLabel = `${items.length}권 표시`;
+  const typeLabel = list.typeLabel || (list.realtime ? "실시간" : "베스트");
 
   return `
     <article class="${classNames}"${panelStyle}>
       <div class="panel-head">
-        <div class="panel-title-line">
-          <h3 class="panel-title">${escapeHtml(list.name)}</h3>
-          ${list.storeName ? `<span class="store-mini">${escapeHtml(list.storeName)}</span>` : ""}
-          ${list.categoryName ? `<span class="store-mini category-mini">${escapeHtml(list.categoryName)}</span>` : ""}
+        <div>
+          <div class="panel-title-line">
+            <h3 class="panel-title">${escapeHtml(list.name)}</h3>
+            ${list.storeName ? `<span class="store-mini">${escapeHtml(list.storeName)}</span>` : ""}
+            ${list.categoryName ? `<span class="store-mini category-mini">${escapeHtml(list.categoryName)}</span>` : ""}
+          </div>
+          <div class="panel-meta">
+            <span>${escapeHtml(typeLabel)}</span>
+            <span>${escapeHtml(countLabel)}</span>
+          </div>
         </div>
       </div>
       <div class="panel-body">
@@ -306,6 +314,7 @@ function renderRankGroup(title, note, lists, variant = "") {
     return "";
   }
 
+  const itemTotal = lists.reduce((sum, list) => sum + (list.itemCount || 0), 0);
   const groupClass = ["rank-section", variant ? `rank-section-${variant}` : ""]
     .filter(Boolean)
     .join(" ");
@@ -316,6 +325,10 @@ function renderRankGroup(title, note, lists, variant = "") {
         <div>
           <h3 class="rank-section-title">${escapeHtml(title)}</h3>
           ${note ? `<p class="rank-section-note">${escapeHtml(note)}</p>` : ""}
+        </div>
+        <div class="rank-section-stat">
+          <strong>${escapeHtml(itemTotal)}</strong>
+          <span>권</span>
         </div>
       </div>
       <div class="rank-section-grid">
@@ -388,6 +401,12 @@ function renderOverview(visibleSections, sections) {
   const overallRealtimeLists = lists.filter((list) => list.group === "overall-realtime");
   const categoryRealtimeLists = lists.filter((list) => list.group === "category-realtime");
   const standardLists = lists.filter((list) => list.group === "standard" || !list.group);
+  const realtimeTotal = overallRealtimeLists.reduce((sum, list) => sum + (list.itemCount || 0), 0);
+  const focusTotal = getVisibleFocusBooks().reduce(
+    (sum, book) => sum + (book.appearances || []).length,
+    0
+  );
+  const alertTotal = getVisiblePublisherAlerts().length;
   const copy = getOverviewCopy(sections);
 
   return `
@@ -399,17 +418,39 @@ function renderOverview(visibleSections, sections) {
           <p class="overview-note">${escapeHtml(copy.note)}</p>
         </div>
       </div>
+      <div class="dashboard-metrics">
+        <div class="metric-card metric-primary">
+          <span>전체 실시간</span>
+          <strong>${escapeHtml(realtimeTotal)}</strong>
+          <small>권 추적</small>
+        </div>
+        <div class="metric-card">
+          <span>분야별 실시간</span>
+          <strong>${escapeHtml(categoryRealtimeLists.length)}</strong>
+          <small>개 카드</small>
+        </div>
+        <div class="metric-card">
+          <span>주력 도서 노출</span>
+          <strong>${escapeHtml(focusTotal)}</strong>
+          <small>건</small>
+        </div>
+        <div class="metric-card">
+          <span>출판사 알림</span>
+          <strong>${escapeHtml(alertTotal)}</strong>
+          <small>건</small>
+        </div>
+      </div>
       <div class="overview-sections">
         ${renderRankGroup(
           "전체 실시간 TOP 100",
-          "교보문고, 예스24, 알라딘의 전체 실시간 순위를 먼저 확인합니다.",
+          "가장 자주 확인하는 전체 실시간 순위입니다.",
           overallRealtimeLists,
           "priority"
         )}
         ${renderFocusBoard()}
         ${renderRankGroup(
           "분야별 실시간",
-          "예스24와 알라딘의 주요 분야별 실시간 순위입니다.",
+          "예스24와 알라딘의 주요 분야를 묶었습니다.",
           categoryRealtimeLists,
           "category"
         )}
@@ -486,7 +527,6 @@ function updateSummary() {
   }
 
   const visibleLists = flattenLists(getVisibleSections(state.dashboard.sections));
-  const totalCards = visibleLists.length;
   const totalBooks = visibleLists.reduce((sum, list) => sum + list.itemCount, 0);
   const alertCount = getVisiblePublisherAlerts().length;
   const searchSuffix = state.search
@@ -496,7 +536,7 @@ function updateSummary() {
     alertCount > 0 ? ` ${WATCH_PUBLISHER_NAME} 알림 ${alertCount}건이 감지되었습니다.` : "";
 
   elements.summaryText.textContent =
-    `총 ${totalCards}개 목록, ${totalBooks}권을 표시 중입니다.${searchSuffix}${alertSuffix}`;
+    `현재 ${totalBooks}권을 표시 중입니다.${searchSuffix}${alertSuffix}`;
 }
 
 function renderDashboard() {
