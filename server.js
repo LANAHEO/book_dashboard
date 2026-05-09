@@ -22,8 +22,30 @@ const KYOBO_API_KEY =
   "_uV_zR5yMFoizFJ-exMkbYdExhGnI9L-C6mJOkHGw_XH2cq-vTBomkyhSFPhzL1e_" +
   "KDxiKL12lmOLwTW76XGFYk21Rv9Wwg0KHzk1v0pk2k_N6GBrrlkIxhB01ASoKU42w" +
   "Fghx0O.LovE487VgIlkk_1NZcEp_w";
+const STANDARD_LIMIT = 20;
+const REALTIME_LIMIT = 100;
 const WATCH_PUBLISHER_NAME = "상상스퀘어";
 const WATCH_PUBLISHER_KEY = normalizePublisherKey(WATCH_PUBLISHER_NAME);
+const FOCUS_BOOK_TITLES = [
+  "인생을 위한 최소한의 생각",
+  "AI, 신의 탄생 인간의 종말"
+];
+
+const YES24_REALTIME_CATEGORIES = [
+  { name: "경제경영", categoryNumber: "001001025" },
+  { name: "자기계발", categoryNumber: "001001026" },
+  { name: "인문", categoryNumber: "001001019" },
+  { name: "에세이", categoryNumber: "001001047" },
+  { name: "소설/시/희곡", categoryNumber: "001001046" }
+];
+
+const ALADIN_REALTIME_CATEGORIES = [
+  { name: "경제경영", cid: "170" },
+  { name: "자기계발", cid: "336" },
+  { name: "인문학", cid: "656" },
+  { name: "에세이", cid: "55889" },
+  { name: "소설/시/희곡", cid: "1" }
+];
 
 const cache = new Map();
 
@@ -54,13 +76,14 @@ const SOURCES = [
     storeId: "kyobo",
     name: "종합 주간 베스트",
     typeLabel: "주간",
+    group: "standard",
     realtime: false,
     ttlMs: TEN_MINUTES,
     sourceUrl: "https://store.kyobobook.co.kr/bestseller/total/weekly",
     load: () =>
       fetchKyoboList("total", {
         page: 1,
-        per: 20,
+        per: STANDARD_LIMIT,
         period: "002",
         bsslBksClstCode: "A"
       })
@@ -70,13 +93,14 @@ const SOURCES = [
     storeId: "kyobo",
     name: "온라인 베스트 일간",
     typeLabel: "일간",
+    group: "standard",
     realtime: false,
     ttlMs: TEN_MINUTES,
     sourceUrl: "https://store.kyobobook.co.kr/bestseller/online/daily",
     load: () =>
       fetchKyoboList("online", {
         page: 1,
-        per: 20,
+        per: STANDARD_LIMIT,
         period: "001",
         dsplDvsnCode: "001",
         dsplTrgtDvsnCode: "002",
@@ -88,13 +112,14 @@ const SOURCES = [
     storeId: "kyobo",
     name: "온라인 베스트 주간",
     typeLabel: "주간",
+    group: "standard",
     realtime: false,
     ttlMs: TEN_MINUTES,
     sourceUrl: "https://store.kyobobook.co.kr/bestseller/online/weekly",
     load: () =>
       fetchKyoboList("online", {
         page: 1,
-        per: 20,
+        per: STANDARD_LIMIT,
         period: "002",
         dsplDvsnCode: "001",
         dsplTrgtDvsnCode: "002",
@@ -106,13 +131,14 @@ const SOURCES = [
     storeId: "kyobo",
     name: "온라인 베스트 월간",
     typeLabel: "월간",
+    group: "standard",
     realtime: false,
     ttlMs: TEN_MINUTES,
     sourceUrl: "https://store.kyobobook.co.kr/bestseller/online/monthly",
     load: () =>
       fetchKyoboList("online", {
         page: 1,
-        per: 20,
+        per: STANDARD_LIMIT,
         period: "003",
         dsplDvsnCode: "001",
         dsplTrgtDvsnCode: "002",
@@ -122,15 +148,16 @@ const SOURCES = [
   {
     id: "kyobo-realtime",
     storeId: "kyobo",
-    name: "실시간 베스트",
-    typeLabel: "5분 주기",
+    name: "실시간 베스트 TOP 100",
+    typeLabel: "TOP 100",
+    group: "overall-realtime",
     realtime: true,
     ttlMs: FIVE_MINUTES,
     sourceUrl: "https://store.kyobobook.co.kr/bestseller/realtime",
     load: () =>
       fetchKyoboList("realtime", {
         page: 1,
-        per: 20
+        per: REALTIME_LIMIT
       })
   },
   {
@@ -138,40 +165,58 @@ const SOURCES = [
     storeId: "yes24",
     name: "국내도서 종합 베스트",
     typeLabel: "종합",
+    group: "standard",
     realtime: false,
     ttlMs: TEN_MINUTES,
     sourceUrl: "https://www.yes24.com/product/category/bestseller?categoryNumber=001",
     load: () =>
       fetchYes24List(
-        "https://www.yes24.com/product/category/bestseller?categoryNumber=001"
+        "https://www.yes24.com/product/category/bestseller?categoryNumber=001",
+        { limit: STANDARD_LIMIT }
       )
   },
   {
     id: "yes24-realtime",
     storeId: "yes24",
-    name: "실시간 베스트",
-    typeLabel: "5분 주기",
+    name: "실시간 베스트 TOP 100",
+    typeLabel: "TOP 100",
+    group: "overall-realtime",
     realtime: true,
     ttlMs: FIVE_MINUTES,
     sourceUrl:
       "https://www.yes24.com/product/category/realtimebestseller?categoryNumber=001",
     load: () =>
       fetchYes24List(
-        "https://www.yes24.com/product/category/realtimebestseller?categoryNumber=001"
+        "https://www.yes24.com/product/category/realtimebestseller?categoryNumber=001",
+        { limit: REALTIME_LIMIT }
       )
   },
+  ...YES24_REALTIME_CATEGORIES.map((category) => ({
+    id: `yes24-realtime-${category.categoryNumber}`,
+    storeId: "yes24",
+    name: `${category.name} 실시간`,
+    typeLabel: "분야별",
+    categoryName: category.name,
+    group: "category-realtime",
+    realtime: true,
+    ttlMs: FIVE_MINUTES,
+    sourceUrl: makeYes24RealtimeUrl(category.categoryNumber),
+    load: () => fetchYes24List(makeYes24RealtimeUrl(category.categoryNumber), { limit: REALTIME_LIMIT })
+  })),
   {
     id: "yes24-day",
     storeId: "yes24",
     name: "일별 베스트셀러",
     typeLabel: "일별",
+    group: "standard",
     realtime: false,
     ttlMs: TEN_MINUTES,
     sourceUrl:
       "https://www.yes24.com/product/category/daybestseller?categoryNumber=001",
     load: () =>
       fetchYes24List(
-        "https://www.yes24.com/product/category/daybestseller?categoryNumber=001"
+        "https://www.yes24.com/product/category/daybestseller?categoryNumber=001",
+        { limit: STANDARD_LIMIT }
       )
   },
   {
@@ -179,32 +224,76 @@ const SOURCES = [
     storeId: "aladin",
     name: "주간 베스트",
     typeLabel: "주간",
+    group: "standard",
     realtime: false,
     ttlMs: TEN_MINUTES,
     sourceUrl:
       "https://www.aladin.co.kr/shop/common/wbest.aspx?BranchType=1&BestType=Bestseller",
     load: () =>
       fetchAladinList(
-        "https://www.aladin.co.kr/shop/common/wbest.aspx?BranchType=1&BestType=Bestseller"
+        "https://www.aladin.co.kr/shop/common/wbest.aspx?BranchType=1&BestType=Bestseller",
+        { limit: STANDARD_LIMIT }
       )
   },
   {
     id: "aladin-now",
     storeId: "aladin",
-    name: "지금 베스트",
-    typeLabel: "5분 주기",
+    name: "지금 베스트 TOP 100",
+    typeLabel: "TOP 100",
+    group: "overall-realtime",
     realtime: true,
     ttlMs: FIVE_MINUTES,
     sourceUrl:
       "https://www.aladin.co.kr/shop/common/wbest.aspx?BranchType=1&BestType=NowBest",
     load: () =>
       fetchAladinList(
-        "https://www.aladin.co.kr/shop/common/wbest.aspx?BranchType=1&BestType=NowBest"
+        "https://www.aladin.co.kr/shop/common/wbest.aspx?BranchType=1&BestType=NowBest",
+        { limit: REALTIME_LIMIT, pages: 2 }
       )
-  }
+  },
+  ...ALADIN_REALTIME_CATEGORIES.map((category) => ({
+    id: `aladin-now-${category.cid}`,
+    storeId: "aladin",
+    name: `${category.name} 실시간`,
+    typeLabel: "분야별",
+    categoryName: category.name,
+    group: "category-realtime",
+    realtime: true,
+    ttlMs: FIVE_MINUTES,
+    sourceUrl: makeAladinNowUrl(category.cid),
+    load: () => fetchAladinList(makeAladinNowUrl(category.cid), { limit: REALTIME_LIMIT, pages: 2 })
+  }))
 ];
 
 const sourceById = new Map(SOURCES.map((source) => [source.id, source]));
+
+function makeYes24RealtimeUrl(categoryNumber) {
+  return `https://www.yes24.com/product/category/realtimebestseller?categoryNumber=${categoryNumber}`;
+}
+
+function makeAladinNowUrl(cid = "") {
+  const url = new URL("https://www.aladin.co.kr/shop/common/wbest.aspx");
+  url.searchParams.set("BranchType", "1");
+  url.searchParams.set("BestType", "NowBest");
+
+  if (cid) {
+    url.searchParams.set("CID", cid);
+  }
+
+  return url.toString();
+}
+
+function makeAladinPageUrl(url, page) {
+  if (page <= 1) {
+    return url;
+  }
+
+  const pageUrl = new URL(url);
+  pageUrl.searchParams.set("SortOrder", "1");
+  pageUrl.searchParams.set("cnt", "100");
+  pageUrl.searchParams.set("page", String(page));
+  return pageUrl.toString();
+}
 
 function createHeaders(extra = {}) {
   return {
@@ -419,6 +508,19 @@ function isWatchedPublisher(value) {
   return key ? key.includes(WATCH_PUBLISHER_KEY) : false;
 }
 
+function normalizeTitleKey(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "");
+}
+
+function matchesFocusTitle(itemTitle, focusTitle) {
+  const itemKey = normalizeTitleKey(itemTitle);
+  const focusKey = normalizeTitleKey(focusTitle);
+  return Boolean(itemKey && focusKey && itemKey.includes(focusKey));
+}
+
 function mapKyoboItem(item) {
   const publishedAt = formatCompactDate(item.rlseDate || item.ppbkRlseDate);
   const price = item.sapr ? `${formatNumber(item.sapr)}원` : "";
@@ -439,8 +541,9 @@ function mapKyoboItem(item) {
   };
 }
 
-async function fetchKyoboList(type, params) {
+async function fetchKyoboList(type, params, options = {}) {
   const query = new URLSearchParams();
+  const limit = options.limit || params.per || STANDARD_LIMIT;
 
   Object.entries(params).forEach(([key, value]) => {
     if (value !== undefined && value !== null) {
@@ -456,7 +559,7 @@ async function fetchKyoboList(type, params) {
   const data = payload.data || {};
 
   return {
-    items: dedupeByRank((data.bestSeller || []).map(mapKyoboItem)).slice(0, 20),
+    items: dedupeByRank((data.bestSeller || []).map(mapKyoboItem)).slice(0, limit),
     sourceStamp: formatKyoboStamp(data.ymw)
   };
 }
@@ -502,14 +605,15 @@ function mapYes24Block(block) {
   };
 }
 
-async function fetchYes24List(url) {
+async function fetchYes24List(url, options = {}) {
+  const limit = options.limit || STANDARD_LIMIT;
   const html = await fetchText(url, {
     accept: "text/html,application/xhtml+xml"
   });
   const blocks = html.split(/<li class="[^"]*" data-goods-no="/).slice(1);
 
   return {
-    items: dedupeByRank(blocks.map(mapYes24Block).filter(Boolean)).slice(0, 20),
+    items: dedupeByRank(blocks.map(mapYes24Block).filter(Boolean)).slice(0, limit),
     sourceStamp: ""
   };
 }
@@ -589,12 +693,20 @@ function mapAladinBlock(block) {
   };
 }
 
-async function fetchAladinList(url) {
-  const html = await fetchText(url, {
-    accept: "text/html,application/xhtml+xml"
-  });
-  const blocks = html.split(/<div class="ss_book_box"[^>]*>/).slice(1);
-  const items = dedupeByRank(blocks.map(mapAladinBlock).filter(Boolean)).slice(0, 20);
+async function fetchAladinList(url, options = {}) {
+  const limit = options.limit || STANDARD_LIMIT;
+  const pages = options.pages || 1;
+  const htmlPages = await Promise.all(
+    Array.from({ length: pages }, (_, index) =>
+      fetchText(makeAladinPageUrl(url, index + 1), {
+        accept: "text/html,application/xhtml+xml"
+      })
+    )
+  );
+  const blocks = htmlPages.flatMap((html) =>
+    html.split(/<div class="ss_book_box"[^>]*>/).slice(1)
+  );
+  const items = dedupeByRank(blocks.map(mapAladinBlock).filter(Boolean)).slice(0, limit);
 
   return {
     items,
@@ -613,6 +725,8 @@ function buildPayload(definition, result, options = {}) {
     storeId: definition.storeId,
     name: definition.name,
     typeLabel: definition.typeLabel,
+    group: definition.group || (definition.realtime ? "overall-realtime" : "standard"),
+    categoryName: definition.categoryName || "",
     realtime: definition.realtime,
     sourceUrl: definition.sourceUrl,
     updatedAt: now.toISOString(),
@@ -652,6 +766,51 @@ function buildPublisherAlerts(sections) {
     uniqueTitleCount: new Set(items.map((item) => `${item.title}::${item.publisher}`)).size,
     items
   };
+}
+
+function buildFocusBooks(sections) {
+  return FOCUS_BOOK_TITLES.map((title) => {
+    const appearances = sections.flatMap((section) =>
+      section.lists.flatMap((list) =>
+        list.items
+          .filter((item) => matchesFocusTitle(item.title, title))
+          .map((item) => ({
+            storeId: section.id,
+            storeName: section.name,
+            listId: list.id,
+            listName: list.name,
+            group: list.group || "",
+            categoryName: list.categoryName || "",
+            realtime: Boolean(list.realtime),
+            rank: item.rank,
+            title: item.title,
+            link: item.link,
+            image: item.image,
+            publisher: item.publisher || ""
+          }))
+      )
+    );
+    const realtimeAppearances = appearances.filter((item) => item.realtime);
+    const rankBasis = realtimeAppearances.length ? realtimeAppearances : appearances;
+    const bestRank = rankBasis.length
+      ? Math.min(...rankBasis.map((item) => item.rank).filter(Boolean))
+      : null;
+
+    appearances.sort((a, b) => {
+      if (a.realtime !== b.realtime) {
+        return a.realtime ? -1 : 1;
+      }
+
+      return (a.rank || 9999) - (b.rank || 9999);
+    });
+
+    return {
+      title,
+      bestRank,
+      appearanceCount: appearances.length,
+      appearances
+    };
+  });
 }
 
 async function loadSource(id, options = {}) {
@@ -719,7 +878,8 @@ async function buildDashboard(forceIds = []) {
   return {
     generatedAt: new Date().toISOString(),
     sections,
-    alerts: buildPublisherAlerts(sections)
+    alerts: buildPublisherAlerts(sections),
+    focusBooks: buildFocusBooks(sections)
   };
 }
 

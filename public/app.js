@@ -94,6 +94,21 @@ function getVisiblePublisherAlerts() {
   return alerts.filter((alert) => alert.storeId === state.selectedStore);
 }
 
+function filterBySelectedStore(items) {
+  if (state.selectedStore === "all") {
+    return items;
+  }
+
+  return items.filter((item) => item.storeId === state.selectedStore);
+}
+
+function getVisibleFocusBooks() {
+  return (state.dashboard?.focusBooks || []).map((book) => ({
+    ...book,
+    appearances: filterBySelectedStore(book.appearances || [])
+  }));
+}
+
 function searchableText(item) {
   return [item.title, item.meta, item.secondary, item.publisher]
     .filter(Boolean)
@@ -141,6 +156,14 @@ function renderItem(item) {
 
 function renderCard(list) {
   const items = filterItems(list.items);
+  const classNames = [
+    "panel",
+    list.realtime ? "realtime" : "",
+    list.group === "overall-realtime" ? "panel-priority" : "",
+    list.itemCount >= 80 ? "panel-long" : ""
+  ]
+    .filter(Boolean)
+    .join(" ");
   const panelStyle =
     list.accent && list.softAccent
       ? ` style="--store-accent:${escapeHtml(list.accent)}; --store-soft:${escapeHtml(list.softAccent)}"`
@@ -158,11 +181,12 @@ function renderCard(list) {
       : '<div class="panel-empty">현재 검색어와 일치하는 책이 없습니다.</div>';
 
   return `
-    <article class="panel ${list.realtime ? "realtime" : ""}"${panelStyle}>
+    <article class="${classNames}"${panelStyle}>
       <div class="panel-head">
         <div class="panel-title-line">
           <h3 class="panel-title">${escapeHtml(list.name)}</h3>
           ${list.storeName ? `<span class="store-mini">${escapeHtml(list.storeName)}</span>` : ""}
+          ${list.categoryName ? `<span class="store-mini category-mini">${escapeHtml(list.categoryName)}</span>` : ""}
         </div>
       </div>
       <div class="panel-body">
@@ -242,7 +266,7 @@ function getOverviewCopy(sections) {
     return {
       kicker: "All Sources",
       title: "교보문고, 예스24, 알라딘 전체 보기",
-      note: "첫 화면에서 모든 순위 카드를 한 번에 볼 수 있습니다."
+      note: "전체 실시간 TOP 100을 먼저 확인하고, 이어서 주력 도서와 분야별 실시간 순위를 봅니다."
     };
   }
 
@@ -252,7 +276,7 @@ function getOverviewCopy(sections) {
   return {
     kicker: storeName,
     title: `${storeName} 베스트셀러 전체 보기`,
-    note: `${storeName}의 모든 순위 카드를 한 번에 볼 수 있습니다.`
+    note: `${storeName} 기준으로 실시간 순위와 주력 도서 노출 현황을 확인합니다.`
   };
 }
 
@@ -277,10 +301,93 @@ function renderStoreSection(section) {
   `;
 }
 
+function renderRankGroup(title, note, lists, variant = "") {
+  if (!lists.length) {
+    return "";
+  }
+
+  const groupClass = ["rank-section", variant ? `rank-section-${variant}` : ""]
+    .filter(Boolean)
+    .join(" ");
+
+  return `
+    <section class="${groupClass}">
+      <div class="rank-section-head">
+        <div>
+          <h3 class="rank-section-title">${escapeHtml(title)}</h3>
+          ${note ? `<p class="rank-section-note">${escapeHtml(note)}</p>` : ""}
+        </div>
+      </div>
+      <div class="rank-section-grid">
+        ${lists.map(renderCard).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderFocusBoard() {
+  const focusBooks = getVisibleFocusBooks();
+
+  if (!focusBooks.length) {
+    return "";
+  }
+
+  return `
+    <section class="focus-board">
+      <div class="rank-section-head">
+        <div>
+          <h3 class="rank-section-title">주력 도서 순위 추적</h3>
+          <p class="rank-section-note">주요 도서가 전체/분야별 실시간 순위에서 몇 위에 있는지 모아봅니다.</p>
+        </div>
+      </div>
+      <div class="focus-grid">
+        ${focusBooks
+          .map((book) => {
+            const appearances = book.appearances || [];
+            const realtimeAppearances = appearances.filter((item) => item.realtime);
+            const rankBasis = realtimeAppearances.length ? realtimeAppearances : appearances;
+            const bestRank = rankBasis.length
+              ? Math.min(...rankBasis.map((item) => item.rank).filter(Boolean))
+              : null;
+            const preview = appearances.slice(0, 8);
+
+            return `
+              <article class="focus-card">
+                <div class="focus-card-head">
+                  <span class="focus-rank">${bestRank ? `${escapeHtml(bestRank)}위` : "-"}</span>
+                  <div>
+                    <h4 class="focus-title">${escapeHtml(book.title)}</h4>
+                    <p class="focus-note">${appearances.length ? `${appearances.length}개 순위에서 확인` : "현재 표시 중인 순위권에 없음"}</p>
+                  </div>
+                </div>
+                <div class="focus-appearances">
+                  ${
+                    preview.length
+                      ? preview
+                          .map((item) => {
+                            const label = `${item.storeName} · ${item.categoryName || item.listName} · ${item.rank}위`;
+                            return item.link
+                              ? `<a class="focus-chip" href="${escapeHtml(item.link)}" target="_blank" rel="noreferrer">${escapeHtml(label)}</a>`
+                              : `<span class="focus-chip">${escapeHtml(label)}</span>`;
+                          })
+                          .join("")
+                      : '<span class="focus-chip muted">순위권 진입 대기</span>'
+                  }
+                </div>
+              </article>
+            `;
+          })
+          .join("")}
+      </div>
+    </section>
+  `;
+}
+
 function renderOverview(visibleSections, sections) {
   const lists = flattenLists(visibleSections);
-  const realtimeCount = lists.filter((list) => list.realtime).length;
-  const warningCount = lists.filter((list) => list.warning || list.error).length;
+  const overallRealtimeLists = lists.filter((list) => list.group === "overall-realtime");
+  const categoryRealtimeLists = lists.filter((list) => list.group === "category-realtime");
+  const standardLists = lists.filter((list) => list.group === "standard" || !list.group);
   const copy = getOverviewCopy(sections);
 
   return `
@@ -291,14 +398,26 @@ function renderOverview(visibleSections, sections) {
           <h2 class="overview-title">${escapeHtml(copy.title)}</h2>
           <p class="overview-note">${escapeHtml(copy.note)}</p>
         </div>
-        <div class="overview-stats">
-          <span class="overview-stat">카드 ${lists.length}</span>
-          <span class="overview-stat">실시간 ${realtimeCount}</span>
-          <span class="overview-stat">알림 ${warningCount}</span>
-        </div>
       </div>
       <div class="overview-sections">
-        ${visibleSections.map(renderStoreSection).join("")}
+        ${renderRankGroup(
+          "전체 실시간 TOP 100",
+          "교보문고, 예스24, 알라딘의 전체 실시간 순위를 먼저 확인합니다.",
+          overallRealtimeLists,
+          "priority"
+        )}
+        ${renderFocusBoard()}
+        ${renderRankGroup(
+          "분야별 실시간",
+          "예스24와 알라딘의 주요 분야별 실시간 순위입니다.",
+          categoryRealtimeLists,
+          "category"
+        )}
+        ${renderRankGroup(
+          "기타 베스트셀러",
+          "주간, 일간, 월간 등 참고용 순위입니다.",
+          standardLists
+        )}
       </div>
     </section>
   `;
