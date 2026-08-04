@@ -1180,24 +1180,27 @@ a {
   backdrop-filter: blur(16px);
 }
 
-.view-nav a {
+.view-nav button {
   min-height: 38px;
   padding: 10px 16px;
+  border: 0;
   border-radius: 999px;
+  background: transparent;
   color: var(--muted-strong);
+  font-family: inherit;
   font-size: 13px;
   font-weight: 850;
-  text-decoration: none;
+  cursor: pointer;
   white-space: nowrap;
 }
 
-.view-nav a:first-child {
+.view-nav button:first-child {
   background: #18382b;
   color: #fff;
 }
 
-.view-nav a:hover,
-.view-nav a:focus-visible {
+.view-nav button:hover,
+.view-nav button:focus-visible {
   background: var(--primary-soft);
   color: var(--primary);
   outline: none;
@@ -1818,7 +1821,7 @@ a {
     display: none;
   }
 
-  .view-nav a {
+  .view-nav button {
     flex: 1 0 auto;
     min-height: 44px;
     padding: 12px 13px;

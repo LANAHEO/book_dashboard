@@ -18,6 +18,7 @@ const elements = {
   summaryText: document.getElementById("summary-text"),
   searchInput: document.getElementById("search-input"),
   storeFilters: document.getElementById("store-filters"),
+  viewNav: document.querySelector(".view-nav"),
   autoRefreshBadge: document.getElementById("auto-refresh-badge"),
   autoRefreshText: document.getElementById("auto-refresh-text")
 };
@@ -1065,6 +1066,18 @@ function scheduleDashboardRefresh() {
 }
 
 function bindEvents() {
+  elements.viewNav?.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-scroll-target]");
+    if (!button) {
+      return;
+    }
+
+    document.getElementById(button.dataset.scrollTarget)?.scrollIntoView({
+      behavior: "smooth",
+      block: "start"
+    });
+  });
+
   elements.searchInput.addEventListener("input", () => {
     state.search = elements.searchInput.value.trim().toLowerCase();
     renderDashboard();
@@ -1142,6 +1155,20 @@ function bindEvents() {
   });
 }
 
+function removeAddressHash() {
+  if (!window.location.hash) {
+    return;
+  }
+
+  window.history.replaceState(
+    null,
+    document.title,
+    `${window.location.pathname}${window.location.search}`
+  );
+}
+
+removeAddressHash();
+window.addEventListener("hashchange", removeAddressHash);
 bindEvents();
 showIdleBadge();
 loadDashboard();
