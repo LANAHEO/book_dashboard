@@ -1072,6 +1072,11 @@ function bindEvents() {
       return;
     }
 
+    elements.viewNav
+      .querySelectorAll("[data-scroll-target]")
+      .forEach((navButton) => navButton.removeAttribute("aria-current"));
+    button.setAttribute("aria-current", "true");
+
     document.getElementById(button.dataset.scrollTarget)?.scrollIntoView({
       behavior: "smooth",
       block: "start"

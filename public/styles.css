@@ -1194,16 +1194,18 @@ a {
   white-space: nowrap;
 }
 
-.view-nav button:first-child {
-  background: #18382b;
-  color: #fff;
-}
-
 .view-nav button:hover,
 .view-nav button:focus-visible {
   background: var(--primary-soft);
   color: var(--primary);
   outline: none;
+}
+
+.view-nav button[aria-current="true"],
+.view-nav button[aria-current="true"]:hover,
+.view-nav button[aria-current="true"]:focus-visible {
+  background: #18382b;
+  color: #fff;
 }
 
 .toolbar {
