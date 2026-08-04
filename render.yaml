@@ -3,7 +3,7 @@ services:
     name: book-ranking-dashboard
     runtime: node
     region: singapore
-    plan: starter
+    plan: free
     buildCommand: npm install
     startCommand: npm start
     healthCheckPath: /api/health

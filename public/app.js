@@ -5,13 +5,16 @@ const state = {
   loading: false,
   refreshTimer: null,
   badgeResetTimer: null,
-  hasLoadedOnce: false
+  hasLoadedOnce: false,
+  mobileRealtimeStore: "kyobo",
+  categoryStore: "yes24",
+  categoryListByStore: {},
+  rankPages: {}
 };
 
 const elements = {
   dashboard: document.getElementById("dashboard"),
   generatedAt: document.getElementById("generated-at"),
-  publisherAlerts: document.getElementById("publisher-alerts"),
   summaryText: document.getElementById("summary-text"),
   searchInput: document.getElementById("search-input"),
   storeFilters: document.getElementById("store-filters"),
@@ -23,6 +26,8 @@ const BADGE_IDLE_TEXT = "자동 갱신 · 실시간 5분 / 일반 10분";
 const BADGE_UPDATE_FLASH_MS = 3200;
 const WATCH_PUBLISHER_NAME = "상상스퀘어";
 const WATCH_PUBLISHER_KEY = WATCH_PUBLISHER_NAME.replace(/\s+/g, "").toLowerCase();
+const STORE_ALERT_ORDER = ["kyobo", "yes24", "aladin"];
+const RANK_PAGE_SIZE = 20;
 
 function escapeHtml(value) {
   return String(value || "")
@@ -94,6 +99,76 @@ function getVisiblePublisherAlerts() {
   return alerts.filter((alert) => alert.storeId === state.selectedStore);
 }
 
+function getStoreAlertOrder(storeId) {
+  const index = STORE_ALERT_ORDER.indexOf(storeId);
+  return index === -1 ? STORE_ALERT_ORDER.length : index;
+}
+
+function getRankValue(rank) {
+  const value = Number(rank);
+  return Number.isFinite(value) ? value : 9999;
+}
+
+function getRankTier(rank) {
+  const value = getRankValue(rank);
+
+  if (value <= 10) {
+    return "top10";
+  }
+
+  if (value <= 30) {
+    return "top30";
+  }
+
+  if (value <= 100) {
+    return "top100";
+  }
+
+  return "other";
+}
+
+function sortPublisherAlerts(alerts) {
+  return [...alerts].sort((a, b) => {
+    const storeOrder = getStoreAlertOrder(a.storeId) - getStoreAlertOrder(b.storeId);
+
+    if (storeOrder !== 0) {
+      return storeOrder;
+    }
+
+    const rankOrder = getRankValue(a.rank) - getRankValue(b.rank);
+
+    if (rankOrder !== 0) {
+      return rankOrder;
+    }
+
+    return `${a.title || ""}${a.listName || ""}`.localeCompare(
+      `${b.title || ""}${b.listName || ""}`,
+      "ko"
+    );
+  });
+}
+
+function groupPublisherAlertsByStore(alerts, sections) {
+  const storeNames = new Map(sections.map((section) => [section.id, section.name]));
+  const groups = new Map();
+
+  sortPublisherAlerts(alerts).forEach((alert) => {
+    if (!groups.has(alert.storeId)) {
+      groups.set(alert.storeId, {
+        storeId: alert.storeId,
+        storeName: storeNames.get(alert.storeId) || alert.storeName || "서점",
+        items: []
+      });
+    }
+
+    groups.get(alert.storeId).items.push(alert);
+  });
+
+  return [...groups.values()].sort(
+    (a, b) => getStoreAlertOrder(a.storeId) - getStoreAlertOrder(b.storeId)
+  );
+}
+
 function filterBySelectedStore(items) {
   if (state.selectedStore === "all") {
     return items;
@@ -126,6 +201,7 @@ function filterItems(items) {
 
 function renderItem(item) {
   const watchedPublisher = isWatchedPublisherItem(item);
+  const leadingRank = getRankValue(item.rank) <= 3;
   const image = item.image
     ? `<div class="cover"><img src="${escapeHtml(item.image)}" alt="${escapeHtml(item.title)}" loading="lazy"></div>`
     : '<div class="cover"></div>';
@@ -139,7 +215,7 @@ function renderItem(item) {
     : "";
 
   return `
-    <li class="rank-item ${watchedPublisher ? "rank-item-alert" : ""}">
+    <li class="rank-item ${watchedPublisher ? "rank-item-alert" : ""} ${leadingRank ? "rank-item-leading" : ""}">
       <span class="rank-badge">${escapeHtml(item.rank)}</span>
       ${image}
       <div class="book-copy">
@@ -154,8 +230,71 @@ function renderItem(item) {
   `;
 }
 
+function getRankPageData(list, items) {
+  const paged = list.realtime || items.length > RANK_PAGE_SIZE;
+
+  if (!paged || state.search) {
+    return {
+      items,
+      currentPage: 1,
+      totalPages: 1,
+      paged: false
+    };
+  }
+
+  const highestRank = Math.max(
+    list.realtime ? 100 : 0,
+    ...items.map((item) => getRankValue(item.rank)).filter((rank) => rank < 9999)
+  );
+  const totalPages = Math.max(1, Math.ceil(highestRank / RANK_PAGE_SIZE));
+  const requestedPage = Number(state.rankPages[list.id]) || 1;
+  const currentPage = Math.min(Math.max(requestedPage, 1), totalPages);
+  const from = (currentPage - 1) * RANK_PAGE_SIZE + 1;
+  const to = currentPage * RANK_PAGE_SIZE;
+
+  return {
+    items: items.filter((item) => {
+      const rank = getRankValue(item.rank);
+      return rank >= from && rank <= to;
+    }),
+    currentPage,
+    totalPages,
+    paged: true
+  };
+}
+
+function renderRankPagination(list, pageData) {
+  if (!pageData.paged || pageData.totalPages <= 1) {
+    return "";
+  }
+
+  return `
+    <div class="rank-range" aria-label="${escapeHtml(list.name)} 순위 구간">
+      ${Array.from({ length: pageData.totalPages }, (_, index) => {
+        const page = index + 1;
+        const from = index * RANK_PAGE_SIZE + 1;
+        const to = page * RANK_PAGE_SIZE;
+
+        return `
+          <button
+            type="button"
+            class="rank-range-button ${pageData.currentPage === page ? "active" : ""}"
+            data-rank-page="${page}"
+            data-list-id="${escapeHtml(list.id)}"
+            aria-pressed="${pageData.currentPage === page ? "true" : "false"}"
+          >
+            ${from}–${to}
+          </button>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
 function renderCard(list) {
-  const items = filterItems(list.items);
+  const filteredItems = filterItems(list.items);
+  const pageData = getRankPageData(list, filteredItems);
+  const items = pageData.items;
   const classNames = [
     "panel",
     list.realtime ? "realtime" : "",
@@ -179,7 +318,11 @@ function renderCard(list) {
     items.length > 0
       ? `<ol class="rank-list">${items.map(renderItem).join("")}</ol>`
       : '<div class="panel-empty">현재 검색어와 일치하는 책이 없습니다.</div>';
-  const countLabel = `${items.length}권 표시`;
+  const countLabel = state.search
+    ? `검색 결과 ${filteredItems.length}권`
+    : list.realtime
+      ? `100위 범위 · ${list.itemCount}권 수집`
+      : `${list.itemCount}권 수집`;
   const typeLabel = list.typeLabel || (list.realtime ? "실시간" : "베스트");
 
   return `
@@ -199,6 +342,7 @@ function renderCard(list) {
       </div>
       <div class="panel-body">
         ${note}
+        ${renderRankPagination(list, pageData)}
         <div class="rank-scroll">${content}</div>
       </div>
     </article>
@@ -447,20 +591,304 @@ function renderOverview(visibleSections, sections) {
           overallRealtimeLists,
           "priority"
         )}
-        ${renderFocusBoard()}
-        ${renderRankGroup(
-          "분야별 실시간",
-          "예스24와 알라딘의 주요 분야를 묶었습니다.",
-          categoryRealtimeLists,
-          "category"
-        )}
         ${renderRankGroup(
           "기타 베스트셀러",
           "주간, 일간, 월간 등 참고용 순위입니다.",
           standardLists
         )}
+        ${renderFocusBoard()}
+        ${renderRankGroup(
+          "분야별 베스트셀러",
+          "교보문고, 예스24, 알라딘의 분야별 순위를 묶었습니다.",
+          categoryRealtimeLists,
+          "category"
+        )}
       </div>
     </section>
+  `;
+}
+
+function bestRankFor(appearances, predicate) {
+  const ranks = appearances
+    .filter(predicate)
+    .map((item) => Number(item.rank))
+    .filter((rank) => Number.isFinite(rank) && rank > 0);
+
+  return ranks.length ? Math.min(...ranks) : null;
+}
+
+function renderFocusRank(label, rank) {
+  return `
+    <div class="focus-rank-metric ${rank ? "" : "muted"}">
+      <span>${escapeHtml(label)}</span>
+      <strong>${rank ? `${escapeHtml(rank)}위` : "순위권 밖"}</strong>
+    </div>
+  `;
+}
+
+function formatPublishedDate(value) {
+  if (!value) {
+    return "출간일 확인 중";
+  }
+
+  return `출간 ${String(value).replaceAll("-", ".")}`;
+}
+
+function renderFocusBoardV2() {
+  const focusBooks = getVisibleFocusBooks();
+
+  return `
+    <section class="focus-board section-block focus-board-priority" id="focus-books">
+      <div class="section-heading">
+        <div>
+          <div class="section-label">Sangsang Square</div>
+          <h2>상상스퀘어 도서 순위</h2>
+          <p>수집된 전체·분야별 순위에서 상상스퀘어 도서를 찾아 출간 최신순으로 표시합니다.</p>
+        </div>
+        <span class="section-count">${escapeHtml(focusBooks.length)}종 추적</span>
+      </div>
+      <div class="focus-grid">
+        ${focusBooks
+          .map((book) => {
+            const appearances = [...(book.appearances || [])].sort((a, b) => {
+              const groupOrder = {
+                "overall-realtime": 0,
+                "category-realtime": 1,
+                standard: 2
+              };
+              return (
+                (groupOrder[a.group] ?? 9) - (groupOrder[b.group] ?? 9) ||
+                getRankValue(a.rank) - getRankValue(b.rank)
+              );
+            });
+            const overallRank = bestRankFor(
+              appearances,
+              (item) => item.group === "overall-realtime"
+            );
+            const categoryRank = bestRankFor(
+              appearances,
+              (item) => item.group === "category-realtime"
+            );
+
+            return `
+              <article class="focus-card">
+                <div class="focus-card-top">
+                  <span class="focus-status ${appearances.length ? "active" : ""}">
+                    ${appearances.length ? "순위 확인" : "진입 대기"}
+                  </span>
+                  <span class="focus-appearance-count">
+                    ${escapeHtml(formatPublishedDate(book.latestPublishedAt))} · ${escapeHtml(appearances.length)}곳 노출
+                  </span>
+                </div>
+                <h3 class="focus-title">${escapeHtml(book.title)}</h3>
+                <div class="focus-rank-grid">
+                  ${renderFocusRank("전체 실시간", overallRank)}
+                  ${renderFocusRank("분야 최고", categoryRank)}
+                </div>
+                <div class="focus-appearances">
+                  ${appearances.length
+                    ? appearances
+                        .slice(0, 6)
+                        .map((item) => {
+                          const label = `${item.storeName} · ${item.categoryName || item.listName} · ${item.rank}위`;
+                          return item.link
+                            ? `<a class="focus-chip" href="${escapeHtml(item.link)}" target="_blank" rel="noreferrer">${escapeHtml(label)}</a>`
+                            : `<span class="focus-chip">${escapeHtml(label)}</span>`;
+                        })
+                        .join("")
+                    : '<span class="focus-chip muted">현재 수집된 순위에는 없습니다.</span>'}
+                </div>
+              </article>
+            `;
+          })
+          .join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderStoreSwitcher(lists, selectedStore, dataAttribute, label) {
+  return `
+    <div class="store-switcher" aria-label="${escapeHtml(label)}">
+      ${lists
+        .map(
+          (list) => `
+            <button
+              type="button"
+              class="store-switcher-button ${selectedStore === list.storeId ? "active" : ""}"
+              ${dataAttribute}="${escapeHtml(list.storeId)}"
+              aria-pressed="${selectedStore === list.storeId ? "true" : "false"}"
+              style="--switch-accent:${escapeHtml(list.accent)}"
+            >
+              ${escapeHtml(list.storeName)}
+              <span>TOP 100</span>
+            </button>
+          `
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function renderRealtimeBoard(lists) {
+  if (!lists.length) {
+    return "";
+  }
+
+  if (!lists.some((list) => list.storeId === state.mobileRealtimeStore)) {
+    state.mobileRealtimeStore = lists[0].storeId;
+  }
+
+  const totalCollected = lists.reduce((sum, list) => sum + (list.itemCount || 0), 0);
+
+  return `
+    <section class="section-block realtime-board" id="realtime-rankings">
+      <div class="section-heading realtime-heading">
+        <div>
+          <div class="section-label live-label"><span aria-hidden="true"></span> Live now</div>
+          <h2>전체 실시간 TOP 100</h2>
+          <p>가장 자주 보는 순위입니다. 20위 단위로 빠르게 이동할 수 있습니다.</p>
+        </div>
+        <div class="realtime-total">
+          <strong>${escapeHtml(totalCollected)}</strong>
+          <span>권 수집</span>
+        </div>
+      </div>
+      ${renderStoreSwitcher(
+        lists,
+        state.mobileRealtimeStore,
+        "data-mobile-realtime-store",
+        "모바일 실시간 서점 선택"
+      )}
+      <div class="realtime-grid">
+        ${lists
+          .map(
+            (list) => `
+              <div class="realtime-store-card ${state.mobileRealtimeStore === list.storeId ? "mobile-active" : ""}">
+                ${renderCard(list)}
+              </div>
+            `
+          )
+          .join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderCategoryBoard(lists) {
+  if (!lists.length) {
+    return `
+      <section class="section-block category-board" id="category-rankings">
+        <div class="section-heading">
+          <div>
+            <div class="section-label">Categories</div>
+            <h2>분야별 실시간 순위</h2>
+            <p>분야별 실시간은 예스24와 알라딘에서 제공합니다.</p>
+          </div>
+        </div>
+        <div class="section-empty">상단에서 예스24 또는 알라딘을 선택하면 분야별 실시간 순위를 볼 수 있습니다.</div>
+      </section>
+    `;
+  }
+
+  const storeLists = STORE_ALERT_ORDER
+    .map((storeId) => lists.find((list) => list.storeId === storeId))
+    .filter(Boolean);
+
+  if (!storeLists.some((list) => list.storeId === state.categoryStore)) {
+    state.categoryStore = storeLists[0].storeId;
+  }
+
+  const activeLists = lists.filter((list) => list.storeId === state.categoryStore);
+  let selectedListId = state.categoryListByStore[state.categoryStore];
+
+  if (!activeLists.some((list) => list.id === selectedListId)) {
+    selectedListId = activeLists[0].id;
+    state.categoryListByStore[state.categoryStore] = selectedListId;
+  }
+
+  const selectedIndex = activeLists.findIndex((list) => list.id === selectedListId);
+  const selectedList = activeLists[selectedIndex];
+
+  return `
+    <section class="section-block category-board" id="category-rankings">
+      <div class="section-heading">
+        <div>
+          <div class="section-label">Categories</div>
+          <h2>분야별 실시간 순위</h2>
+          <p>서점을 고르고 분야를 순서대로 넘겨보세요.</p>
+        </div>
+        <span class="section-count">${escapeHtml(selectedIndex + 1)} / ${escapeHtml(activeLists.length)}</span>
+      </div>
+      ${renderStoreSwitcher(
+        storeLists,
+        state.categoryStore,
+        "data-category-store",
+        "분야별 순위 서점 선택"
+      )}
+      <div class="category-selector" aria-label="분야 선택">
+        ${activeLists
+          .map(
+            (list) => `
+              <button
+                type="button"
+                class="category-selector-button ${selectedList.id === list.id ? "active" : ""}"
+                data-category-list="${escapeHtml(list.id)}"
+                aria-pressed="${selectedList.id === list.id ? "true" : "false"}"
+              >
+                ${escapeHtml(list.categoryName || list.name)}
+              </button>
+            `
+          )
+          .join("")}
+      </div>
+      <div class="category-stage">
+        <div class="category-stepper">
+          <button type="button" data-category-step="-1" ${selectedIndex === 0 ? "disabled" : ""}>이전 분야</button>
+          <strong>${escapeHtml(selectedList.categoryName || selectedList.name)}</strong>
+          <button type="button" data-category-step="1" ${selectedIndex === activeLists.length - 1 ? "disabled" : ""}>다음 분야</button>
+        </div>
+        ${renderCard(selectedList)}
+      </div>
+    </section>
+  `;
+}
+
+function renderStandardBoard(lists) {
+  if (!lists.length) {
+    return "";
+  }
+
+  return `
+    <section class="section-block standard-board" id="standard-rankings">
+      <div class="section-heading">
+        <div>
+          <div class="section-label">Reference</div>
+          <h2>일간·주간·월간 참고 순위</h2>
+          <p>실시간과 분야별 확인이 끝난 뒤 참고하는 순위입니다.</p>
+        </div>
+        <span class="section-count">${escapeHtml(lists.length)}개 목록</span>
+      </div>
+      <div class="standard-grid">
+        ${lists.map(renderCard).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderDashboardSections(visibleSections) {
+  const lists = flattenLists(visibleSections);
+  const overallRealtimeLists = lists.filter((list) => list.group === "overall-realtime");
+  const categoryRealtimeLists = lists.filter((list) => list.group === "category-realtime");
+  const standardLists = lists.filter((list) => list.group === "standard" || !list.group);
+
+  return `
+    <div class="dashboard-stack">
+      ${renderFocusBoardV2()}
+      ${renderRealtimeBoard(overallRealtimeLists)}
+      ${renderCategoryBoard(categoryRealtimeLists)}
+      ${renderStandardBoard(standardLists)}
+    </div>
   `;
 }
 
@@ -485,8 +913,7 @@ function renderPublisherAlerts() {
   const uniqueTitleCount = new Set(
     visibleAlerts.map((alert) => `${alert.title}::${alert.publisher}`)
   ).size;
-  const previewAlerts = visibleAlerts.slice(0, 8);
-  const remainingCount = visibleAlerts.length - previewAlerts.length;
+  const alertGroups = groupPublisherAlertsByStore(visibleAlerts, state.dashboard.sections);
 
   elements.publisherAlerts.hidden = false;
   elements.publisherAlerts.innerHTML = `
@@ -498,24 +925,38 @@ function renderPublisherAlerts() {
           <p class="publisher-alert-note">${escapeHtml(scopeLabel)} 베스트셀러에서 ${uniqueTitleCount}종의 도서가 확인되었습니다.</p>
         </div>
       </div>
-      <div class="publisher-alert-list">
-        ${previewAlerts
-          .map((alert) => {
-            const content = `
-              <span class="publisher-alert-rank">${escapeHtml(alert.rank)}위</span>
-              <span class="publisher-alert-copy">
-                <strong>${escapeHtml(alert.title)}</strong>
-                <span>${escapeHtml(`${alert.storeName} · ${alert.listName}`)}</span>
-              </span>
-            `;
+      <div class="publisher-alert-groups">
+        ${alertGroups
+          .map(
+            (group) => `
+              <section class="publisher-alert-store publisher-alert-store-${escapeHtml(group.storeId)}">
+                <div class="publisher-alert-store-head">
+                  <span class="publisher-alert-store-name">${escapeHtml(group.storeName)}</span>
+                  <span class="publisher-alert-store-count">${escapeHtml(group.items.length)}건</span>
+                </div>
+                <div class="publisher-alert-store-list">
+                  ${group.items
+                    .map((alert) => {
+                      const rankTier = getRankTier(alert.rank);
+                      const content = `
+                        <span class="publisher-alert-rank publisher-alert-rank-${rankTier}">${escapeHtml(alert.rank)}위</span>
+                        <span class="publisher-alert-copy">
+                          <strong>${escapeHtml(alert.title)}</strong>
+                          <span>${escapeHtml(alert.listName)}</span>
+                        </span>
+                      `;
 
-            return alert.link
-              ? `<a class="publisher-alert-chip" href="${escapeHtml(alert.link)}" target="_blank" rel="noreferrer">${content}</a>`
-              : `<div class="publisher-alert-chip">${content}</div>`;
-          })
+                      return alert.link
+                        ? `<a class="publisher-alert-chip" href="${escapeHtml(alert.link)}" target="_blank" rel="noreferrer">${content}</a>`
+                        : `<div class="publisher-alert-chip">${content}</div>`;
+                    })
+                    .join("")}
+                </div>
+              </section>
+            `
+          )
           .join("")}
       </div>
-      ${remainingCount > 0 ? `<p class="publisher-alert-more">외 ${escapeHtml(remainingCount)}건이 더 있습니다.</p>` : ""}
     </div>
   `;
 }
@@ -528,21 +969,17 @@ function updateSummary() {
 
   const visibleLists = flattenLists(getVisibleSections(state.dashboard.sections));
   const totalBooks = visibleLists.reduce((sum, list) => sum + list.itemCount, 0);
-  const alertCount = getVisiblePublisherAlerts().length;
   const searchSuffix = state.search
     ? ` 현재 검색어: "${elements.searchInput.value.trim()}"`
     : "";
-  const alertSuffix =
-    alertCount > 0 ? ` ${WATCH_PUBLISHER_NAME} 알림 ${alertCount}건이 감지되었습니다.` : "";
 
   elements.summaryText.textContent =
-    `현재 ${totalBooks}권을 표시 중입니다.${searchSuffix}${alertSuffix}`;
+    `현재 ${totalBooks}권을 표시 중입니다.${searchSuffix}`;
 }
 
 function renderDashboard() {
   if (!state.dashboard) {
     elements.dashboard.innerHTML = '<div class="panel-empty">데이터를 불러오고 있습니다.</div>';
-    renderPublisherAlerts();
     return;
   }
 
@@ -550,8 +987,7 @@ function renderDashboard() {
 
   elements.generatedAt.textContent = formatDateTime(state.dashboard.generatedAt);
   renderStoreFilters(state.dashboard.sections);
-  elements.dashboard.innerHTML = renderOverview(visibleSections, state.dashboard.sections);
-  renderPublisherAlerts();
+  elements.dashboard.innerHTML = renderDashboardSections(visibleSections);
   updateSummary();
 }
 
@@ -594,10 +1030,6 @@ async function loadDashboard(refresh = "") {
       `<div class="panel-empty">대시보드를 불러오지 못했습니다.<br>${escapeHtml(error.message)}</div>`;
     elements.generatedAt.textContent = "불러오기 실패";
     elements.summaryText.textContent = "서버 응답을 확인해 주세요.";
-    if (elements.publisherAlerts) {
-      elements.publisherAlerts.hidden = true;
-      elements.publisherAlerts.innerHTML = "";
-    }
     setAutoRefreshBadge("자동 갱신 상태를 확인해 주세요", "error");
   } finally {
     setLoading(false);
@@ -646,6 +1078,67 @@ function bindEvents() {
 
     state.selectedStore = target.dataset.storeFilter;
     renderDashboard();
+  });
+
+  elements.dashboard.addEventListener("click", (event) => {
+    const rankPageButton = event.target.closest("[data-rank-page]");
+    if (rankPageButton) {
+      state.rankPages[rankPageButton.dataset.listId] = Number(
+        rankPageButton.dataset.rankPage
+      );
+      renderDashboard();
+      return;
+    }
+
+    const realtimeStoreButton = event.target.closest("[data-mobile-realtime-store]");
+    if (realtimeStoreButton) {
+      state.mobileRealtimeStore = realtimeStoreButton.dataset.mobileRealtimeStore;
+      renderDashboard();
+      return;
+    }
+
+    const categoryStoreButton = event.target.closest("[data-category-store]");
+    if (categoryStoreButton) {
+      state.categoryStore = categoryStoreButton.dataset.categoryStore;
+      renderDashboard();
+      return;
+    }
+
+    const categoryListButton = event.target.closest("[data-category-list]");
+    if (categoryListButton) {
+      state.categoryListByStore[state.categoryStore] =
+        categoryListButton.dataset.categoryList;
+      renderDashboard();
+      return;
+    }
+
+    const categoryStepButton = event.target.closest("[data-category-step]");
+    if (categoryStepButton) {
+      const lists = flattenLists(
+        getVisibleSections(state.dashboard.sections)
+      ).filter(
+        (list) =>
+          list.group === "category-realtime" &&
+          list.storeId === state.categoryStore
+      );
+      const selectedId = state.categoryListByStore[state.categoryStore];
+      const currentIndex = Math.max(
+        0,
+        lists.findIndex((list) => list.id === selectedId)
+      );
+      const nextIndex = Math.min(
+        Math.max(
+          currentIndex + Number(categoryStepButton.dataset.categoryStep),
+          0
+        ),
+        lists.length - 1
+      );
+
+      if (lists[nextIndex]) {
+        state.categoryListByStore[state.categoryStore] = lists[nextIndex].id;
+        renderDashboard();
+      }
+    }
   });
 }
 
