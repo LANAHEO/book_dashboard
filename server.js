@@ -24,16 +24,55 @@ const KYOBO_API_KEY =
   "KDxiKL12lmOLwTW76XGFYk21Rv9Wwg0KHzk1v0pk2k_N6GBrrlkIxhB01ASoKU42w" +
   "Fghx0O.LovE487VgIlkk_1NZcEp_w";
 const STANDARD_LIMIT = 20;
-const REALTIME_LIMIT = 100;
+const RANK_LIMIT = 100;
+const HOST_CONCURRENCY = 4;
+// 예스24는 한 페이지에 24권, 알라딘은 50권만 내려준다.
+const YES24_PAGES_FOR_100 = 5;
+const ALADIN_PAGES_FOR_100 = 2;
+const PERIOD_LABELS = {
+  realtime: "실시간",
+  daily: "일간",
+  weekly: "주간",
+  monthly: "월간"
+};
+const YES24_PERIOD_PATHS = {
+  realtime: "realtimebestseller",
+  daily: "daybestseller",
+  weekly: "bestseller"
+};
+const ALADIN_PERIOD_TYPES = {
+  realtime: "NowBest",
+  daily: "DailyBest",
+  weekly: "Bestseller"
+};
 const WATCH_PUBLISHER_NAME = "상상스퀘어";
 const WATCH_PUBLISHER_KEY = normalizePublisherKey(WATCH_PUBLISHER_NAME);
+// 알라딘 출판사 검색으로 신간 목록을 받아 순위권 밖 도서까지 추적한다.
+// 아래 목록은 수집과 저장된 캐시가 모두 실패했을 때만 쓰는 최소 목록이다.
 const FOCUS_BOOK_TITLES = [
   "인생을 위한 최소한의 생각",
   "AI, 신의 탄생 인간의 종말",
   "스페이스X 일론 머스크"
 ];
+const FOCUS_CATALOG_ID = "publisher-catalog";
+const FOCUS_CATALOG_LIMIT = 20;
+const FOCUS_CATALOG_TTL_MS = 6 * 60 * 60 * 1000;
+const FOCUS_CATALOG_RETRY_MS = 10 * 60 * 1000;
 
-const YES24_REALTIME_CATEGORIES = [
+// 일간·주간은 분야 코드로 직접 조회하지만, 교보문고는 분야별 실시간을 제공하지
+// 않아 실시간만 전체 TOP 100을 분류 코드 앞 두 자리로 나눠서 만든다.
+const KYOBO_CATEGORIES = [
+  { name: "경제/경영", code: "13" },
+  { name: "자기계발", code: "15" },
+  { name: "인문", code: "05" },
+  { name: "시/에세이", code: "03" },
+  { name: "소설", code: "01" }
+];
+const KYOBO_CATEGORY_NOTE =
+  "교보문고는 분야별 실시간 순위를 제공하지 않습니다. 전체 실시간 TOP 100에 든 책을 분야로 나눈 목록이며, 순위는 종합 순위 기준입니다.";
+const KYOBO_REALTIME_SNAPSHOT_TTL_MS = 60 * 1000;
+
+const YES24_CATEGORIES = [
   { name: "경제경영", categoryNumber: "001001025" },
   { name: "자기계발", categoryNumber: "001001026" },
   { name: "인문", categoryNumber: "001001019" },
@@ -41,7 +80,7 @@ const YES24_REALTIME_CATEGORIES = [
   { name: "소설/시/희곡", categoryNumber: "001001046" }
 ];
 
-const ALADIN_REALTIME_CATEGORIES = [
+const ALADIN_CATEGORIES = [
   { name: "경제경영", cid: "170" },
   { name: "자기계발", cid: "336" },
   { name: "인문학", cid: "656" },
@@ -72,12 +111,101 @@ const STORES = [
   }
 ];
 
+function makeCategorySource(options) {
+  const { storeId, period, categoryName, id, sourceUrl, load } = options;
+  const realtime = period === "realtime";
+
+  return {
+    id,
+    storeId,
+    name: `${categoryName} ${PERIOD_LABELS[period]}`,
+    typeLabel: PERIOD_LABELS[period],
+    categoryName,
+    period,
+    group: "category",
+    realtime,
+    ttlMs: realtime ? FIVE_MINUTES : TEN_MINUTES,
+    paginate: options.paginate !== false,
+    derived: options.derived === true,
+    note: options.note || "",
+    sourceUrl,
+    load
+  };
+}
+
+const KYOBO_CATEGORY_SOURCES = KYOBO_CATEGORIES.flatMap((category) => [
+  makeCategorySource({
+    storeId: "kyobo",
+    period: "realtime",
+    categoryName: category.name,
+    id: `kyobo-realtime-${category.code}`,
+    sourceUrl: "https://store.kyobobook.co.kr/bestseller/realtime",
+    paginate: false,
+    derived: true,
+    note: KYOBO_CATEGORY_NOTE,
+    load: () => fetchKyoboRealtimeList(category.code)
+  }),
+  makeCategorySource({
+    storeId: "kyobo",
+    period: "daily",
+    categoryName: category.name,
+    id: `kyobo-daily-${category.code}`,
+    sourceUrl: `https://store.kyobobook.co.kr/bestseller/online/daily/domestic/${category.code}`,
+    load: () => fetchKyoboCategoryList("001", category.code)
+  }),
+  makeCategorySource({
+    storeId: "kyobo",
+    period: "weekly",
+    categoryName: category.name,
+    id: `kyobo-weekly-${category.code}`,
+    sourceUrl: `https://store.kyobobook.co.kr/bestseller/online/weekly/domestic/${category.code}`,
+    load: () => fetchKyoboCategoryList("002", category.code)
+  })
+]);
+
+const YES24_CATEGORY_SOURCES = YES24_CATEGORIES.flatMap((category) =>
+  ["realtime", "daily", "weekly"].map((period) => {
+    const sourceUrl = makeYes24Url(period, category.categoryNumber);
+
+    return makeCategorySource({
+      storeId: "yes24",
+      period,
+      categoryName: category.name,
+      id: `yes24-${period}-${category.categoryNumber}`,
+      sourceUrl,
+      load: () =>
+        fetchYes24List(sourceUrl, {
+          limit: RANK_LIMIT,
+          // 실시간 페이지만 한 번에 100권을 내려준다.
+          pages: period === "realtime" ? 1 : YES24_PAGES_FOR_100
+        })
+    });
+  })
+);
+
+const ALADIN_CATEGORY_SOURCES = ALADIN_CATEGORIES.flatMap((category) =>
+  ["realtime", "daily", "weekly"].map((period) => {
+    const sourceUrl = makeAladinUrl(period, category.cid);
+
+    return makeCategorySource({
+      storeId: "aladin",
+      period,
+      categoryName: category.name,
+      id: `aladin-${period}-${category.cid}`,
+      sourceUrl,
+      load: () =>
+        fetchAladinList(sourceUrl, { limit: RANK_LIMIT, pages: ALADIN_PAGES_FOR_100 })
+    });
+  })
+);
+
 const SOURCES = [
   {
     id: "kyobo-total-weekly",
     storeId: "kyobo",
     name: "종합 주간 베스트",
     typeLabel: "주간",
+    period: "weekly",
     group: "standard",
     realtime: false,
     ttlMs: TEN_MINUTES,
@@ -85,7 +213,7 @@ const SOURCES = [
     load: () =>
       fetchKyoboList("total", {
         page: 1,
-        per: STANDARD_LIMIT,
+        per: RANK_LIMIT,
         period: "002",
         bsslBksClstCode: "A"
       })
@@ -95,6 +223,7 @@ const SOURCES = [
     storeId: "kyobo",
     name: "온라인 베스트 일간",
     typeLabel: "일간",
+    period: "daily",
     group: "standard",
     realtime: false,
     ttlMs: TEN_MINUTES,
@@ -102,7 +231,7 @@ const SOURCES = [
     load: () =>
       fetchKyoboList("online", {
         page: 1,
-        per: STANDARD_LIMIT,
+        per: RANK_LIMIT,
         period: "001",
         dsplDvsnCode: "001",
         dsplTrgtDvsnCode: "002",
@@ -114,6 +243,7 @@ const SOURCES = [
     storeId: "kyobo",
     name: "온라인 베스트 주간",
     typeLabel: "주간",
+    period: "weekly",
     group: "standard",
     realtime: false,
     ttlMs: TEN_MINUTES,
@@ -121,7 +251,7 @@ const SOURCES = [
     load: () =>
       fetchKyoboList("online", {
         page: 1,
-        per: STANDARD_LIMIT,
+        per: RANK_LIMIT,
         period: "002",
         dsplDvsnCode: "001",
         dsplTrgtDvsnCode: "002",
@@ -133,6 +263,7 @@ const SOURCES = [
     storeId: "kyobo",
     name: "온라인 베스트 월간",
     typeLabel: "월간",
+    period: "monthly",
     group: "standard",
     realtime: false,
     ttlMs: TEN_MINUTES,
@@ -140,7 +271,7 @@ const SOURCES = [
     load: () =>
       fetchKyoboList("online", {
         page: 1,
-        per: STANDARD_LIMIT,
+        per: RANK_LIMIT,
         period: "003",
         dsplDvsnCode: "001",
         dsplTrgtDvsnCode: "002",
@@ -156,12 +287,9 @@ const SOURCES = [
     realtime: true,
     ttlMs: FIVE_MINUTES,
     sourceUrl: "https://store.kyobobook.co.kr/bestseller/realtime",
-    load: () =>
-      fetchKyoboList("realtime", {
-        page: 1,
-        per: REALTIME_LIMIT
-      })
+    load: () => fetchKyoboRealtimeList()
   },
+  ...KYOBO_CATEGORY_SOURCES,
   {
     id: "yes24-realtime",
     storeId: "yes24",
@@ -170,57 +298,42 @@ const SOURCES = [
     group: "overall-realtime",
     realtime: true,
     ttlMs: FIVE_MINUTES,
-    sourceUrl:
-      "https://www.yes24.com/product/category/realtimebestseller?categoryNumber=001",
-    load: () =>
-      fetchYes24List(
-        "https://www.yes24.com/product/category/realtimebestseller?categoryNumber=001",
-        { limit: REALTIME_LIMIT }
-      )
+    sourceUrl: makeYes24Url("realtime", "001"),
+    load: () => fetchYes24List(makeYes24Url("realtime", "001"), { limit: RANK_LIMIT })
   },
   {
     id: "yes24-bestseller",
     storeId: "yes24",
-    name: "국내도서 종합 베스트",
-    typeLabel: "종합",
+    name: "국내도서 종합 주간",
+    typeLabel: "주간",
+    period: "weekly",
     group: "standard",
     realtime: false,
     ttlMs: TEN_MINUTES,
-    sourceUrl: "https://www.yes24.com/product/category/bestseller?categoryNumber=001",
+    sourceUrl: makeYes24Url("weekly", "001"),
     load: () =>
-      fetchYes24List(
-        "https://www.yes24.com/product/category/bestseller?categoryNumber=001",
-        { limit: STANDARD_LIMIT }
-      )
+      fetchYes24List(makeYes24Url("weekly", "001"), {
+        limit: RANK_LIMIT,
+        pages: YES24_PAGES_FOR_100
+      })
   },
   {
     id: "yes24-day",
     storeId: "yes24",
     name: "일별 베스트셀러",
-    typeLabel: "일별",
+    typeLabel: "일간",
+    period: "daily",
     group: "standard",
     realtime: false,
     ttlMs: TEN_MINUTES,
-    sourceUrl:
-      "https://www.yes24.com/product/category/daybestseller?categoryNumber=001",
+    sourceUrl: makeYes24Url("daily", "001"),
     load: () =>
-      fetchYes24List(
-        "https://www.yes24.com/product/category/daybestseller?categoryNumber=001",
-        { limit: STANDARD_LIMIT }
-      )
+      fetchYes24List(makeYes24Url("daily", "001"), {
+        limit: RANK_LIMIT,
+        pages: YES24_PAGES_FOR_100
+      })
   },
-  ...YES24_REALTIME_CATEGORIES.map((category) => ({
-    id: `yes24-realtime-${category.categoryNumber}`,
-    storeId: "yes24",
-    name: `${category.name} 실시간`,
-    typeLabel: "분야별",
-    categoryName: category.name,
-    group: "category-realtime",
-    realtime: true,
-    ttlMs: FIVE_MINUTES,
-    sourceUrl: makeYes24RealtimeUrl(category.categoryNumber),
-    load: () => fetchYes24List(makeYes24RealtimeUrl(category.categoryNumber), { limit: REALTIME_LIMIT })
-  })),
+  ...YES24_CATEGORY_SOURCES,
   {
     id: "aladin-now",
     storeId: "aladin",
@@ -229,42 +342,46 @@ const SOURCES = [
     group: "overall-realtime",
     realtime: true,
     ttlMs: FIVE_MINUTES,
-    sourceUrl:
-      "https://www.aladin.co.kr/shop/common/wbest.aspx?BranchType=1&BestType=NowBest",
+    sourceUrl: makeAladinUrl("realtime"),
     load: () =>
-      fetchAladinList(
-        "https://www.aladin.co.kr/shop/common/wbest.aspx?BranchType=1&BestType=NowBest",
-        { limit: REALTIME_LIMIT, pages: 2 }
-      )
+      fetchAladinList(makeAladinUrl("realtime"), {
+        limit: RANK_LIMIT,
+        pages: ALADIN_PAGES_FOR_100
+      })
+  },
+  {
+    id: "aladin-daily",
+    storeId: "aladin",
+    name: "일간 베스트",
+    typeLabel: "일간",
+    period: "daily",
+    group: "standard",
+    realtime: false,
+    ttlMs: TEN_MINUTES,
+    sourceUrl: makeAladinUrl("daily"),
+    load: () =>
+      fetchAladinList(makeAladinUrl("daily"), {
+        limit: RANK_LIMIT,
+        pages: ALADIN_PAGES_FOR_100
+      })
   },
   {
     id: "aladin-weekly",
     storeId: "aladin",
     name: "주간 베스트",
     typeLabel: "주간",
+    period: "weekly",
     group: "standard",
     realtime: false,
     ttlMs: TEN_MINUTES,
-    sourceUrl:
-      "https://www.aladin.co.kr/shop/common/wbest.aspx?BranchType=1&BestType=Bestseller",
+    sourceUrl: makeAladinUrl("weekly"),
     load: () =>
-      fetchAladinList(
-        "https://www.aladin.co.kr/shop/common/wbest.aspx?BranchType=1&BestType=Bestseller",
-        { limit: STANDARD_LIMIT }
-      )
+      fetchAladinList(makeAladinUrl("weekly"), {
+        limit: RANK_LIMIT,
+        pages: ALADIN_PAGES_FOR_100
+      })
   },
-  ...ALADIN_REALTIME_CATEGORIES.map((category) => ({
-    id: `aladin-now-${category.cid}`,
-    storeId: "aladin",
-    name: `${category.name} 실시간`,
-    typeLabel: "분야별",
-    categoryName: category.name,
-    group: "category-realtime",
-    realtime: true,
-    ttlMs: FIVE_MINUTES,
-    sourceUrl: makeAladinNowUrl(category.cid),
-    load: () => fetchAladinList(makeAladinNowUrl(category.cid), { limit: REALTIME_LIMIT, pages: 2 })
-  }))
+  ...ALADIN_CATEGORY_SOURCES
 ];
 
 const sourceById = new Map(SOURCES.map((source) => [source.id, source]));
@@ -301,14 +418,24 @@ async function readPersistedSource(id) {
   }
 }
 
-function makeYes24RealtimeUrl(categoryNumber) {
-  return `https://www.yes24.com/product/category/realtimebestseller?categoryNumber=${categoryNumber}`;
+function makeYes24Url(period, categoryNumber) {
+  return `https://www.yes24.com/product/category/${YES24_PERIOD_PATHS[period]}?categoryNumber=${categoryNumber}`;
 }
 
-function makeAladinNowUrl(cid = "") {
+function makeYes24PageUrl(url, page) {
+  if (page <= 1) {
+    return url;
+  }
+
+  const pageUrl = new URL(url);
+  pageUrl.searchParams.set("pageNumber", String(page));
+  return pageUrl.toString();
+}
+
+function makeAladinUrl(period, cid = "") {
   const url = new URL("https://www.aladin.co.kr/shop/common/wbest.aspx");
   url.searchParams.set("BranchType", "1");
-  url.searchParams.set("BestType", "NowBest");
+  url.searchParams.set("BestType", ALADIN_PERIOD_TYPES[period]);
 
   if (cid) {
     url.searchParams.set("CID", cid);
@@ -337,20 +464,64 @@ function createHeaders(extra = {}) {
   };
 }
 
-async function fetchText(url, headers = {}) {
-  const response = await fetch(url, {
-    headers: createHeaders(headers),
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
-  });
-  const text = await response.text();
+// 목록이 많아 한 번에 수십 건이 나가면 서점 쪽에서 차단당하므로
+// 도메인마다 동시 요청 수를 제한한다.
+const hostQueues = new Map();
 
-  if (!response.ok) {
-    throw new Error(
-      `HTTP ${response.status} ${response.statusText}: ${text.slice(0, 180)}`
-    );
+function getHostQueue(host) {
+  if (!hostQueues.has(host)) {
+    hostQueues.set(host, { active: 0, waiting: [] });
   }
 
-  return text;
+  return hostQueues.get(host);
+}
+
+function acquireHostSlot(host) {
+  const queue = getHostQueue(host);
+
+  if (queue.active < HOST_CONCURRENCY) {
+    queue.active += 1;
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve) => {
+    queue.waiting.push(resolve);
+  });
+}
+
+function releaseHostSlot(host) {
+  const queue = getHostQueue(host);
+  const next = queue.waiting.shift();
+
+  if (next) {
+    next();
+    return;
+  }
+
+  queue.active -= 1;
+}
+
+async function fetchText(url, headers = {}) {
+  const host = new URL(url).host;
+  await acquireHostSlot(host);
+
+  try {
+    const response = await fetch(url, {
+      headers: createHeaders(headers),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+    });
+    const text = await response.text();
+
+    if (!response.ok) {
+      throw new Error(
+        `HTTP ${response.status} ${response.statusText}: ${text.slice(0, 180)}`
+      );
+    }
+
+    return text;
+  } finally {
+    releaseHostSlot(host);
+  }
 }
 
 async function fetchJson(url, headers = {}) {
@@ -579,10 +750,20 @@ function normalizeTitleKey(value) {
     .replace(/\s+/g, "");
 }
 
-function matchesFocusTitle(itemTitle, focusTitle) {
+// 서점마다 부제나 판형이 붙어 제목이 조금씩 다르므로, 신간 목록의 제목 중
+// 가장 길게 일치하는 것을 골라 같은 책으로 묶는다.
+function findCatalogKey(itemTitle, catalogKeys) {
   const itemKey = normalizeTitleKey(itemTitle);
-  const focusKey = normalizeTitleKey(focusTitle);
-  return Boolean(itemKey && focusKey && itemKey.includes(focusKey));
+
+  if (!itemKey) {
+    return "";
+  }
+
+  return (
+    catalogKeys
+      .filter((key) => itemKey === key || (key.length >= 3 && itemKey.includes(key)))
+      .sort((a, b) => b.length - a.length)[0] || ""
+  );
 }
 
 function mapKyoboItem(item) {
@@ -606,9 +787,8 @@ function mapKyoboItem(item) {
   };
 }
 
-async function fetchKyoboList(type, params, options = {}) {
+async function fetchKyoboData(type, params) {
   const query = new URLSearchParams();
-  const limit = options.limit || params.per || STANDARD_LIMIT;
 
   Object.entries(params).forEach(([key, value]) => {
     if (value !== undefined && value !== null) {
@@ -621,11 +801,80 @@ async function fetchKyoboList(type, params, options = {}) {
     accept: "application/json",
     "x-api-gw-key": KYOBO_API_KEY
   });
-  const data = payload.data || {};
+
+  return payload.data || {};
+}
+
+async function fetchKyoboList(type, params, options = {}) {
+  const limit = options.limit || params.per || STANDARD_LIMIT;
+  const data = await fetchKyoboData(type, params);
 
   return {
     items: dedupeByRank((data.bestSeller || []).map(mapKyoboItem)).slice(0, limit),
     sourceStamp: formatKyoboStamp(data.ymw)
+  };
+}
+
+// 실시간 종합 목록과 그 분야별 목록이 모두 같은 응답을 쓰므로,
+// 갱신 주기마다 한 번만 호출하고 결과를 나눠 쓴다.
+let kyoboRealtimeSnapshot = null;
+
+async function requestKyoboRealtimeSnapshot() {
+  const data = await fetchKyoboData("realtime", { page: 1, per: RANK_LIMIT });
+
+  return {
+    sourceStamp: formatKyoboStamp(data.ymw),
+    entries: (data.bestSeller || []).map((entry) => ({
+      item: mapKyoboItem(entry),
+      categoryCode: String(entry.saleCmdtClstCode || "").slice(0, 2)
+    }))
+  };
+}
+
+function loadKyoboRealtimeSnapshot() {
+  const now = Date.now();
+
+  if (kyoboRealtimeSnapshot && kyoboRealtimeSnapshot.expiresAt > now) {
+    return kyoboRealtimeSnapshot.promise;
+  }
+
+  const entry = { expiresAt: now + KYOBO_REALTIME_SNAPSHOT_TTL_MS };
+  entry.promise = requestKyoboRealtimeSnapshot().catch((error) => {
+    if (kyoboRealtimeSnapshot === entry) {
+      kyoboRealtimeSnapshot = null;
+    }
+
+    throw error;
+  });
+  kyoboRealtimeSnapshot = entry;
+
+  return entry.promise;
+}
+
+function fetchKyoboCategoryList(period, categoryCode) {
+  return fetchKyoboList(
+    "online",
+    {
+      page: 1,
+      per: RANK_LIMIT,
+      period,
+      dsplDvsnCode: "001",
+      dsplTrgtDvsnCode: "004",
+      saleCmdtClstCode: categoryCode
+    },
+    { limit: RANK_LIMIT }
+  );
+}
+
+async function fetchKyoboRealtimeList(categoryCode = "") {
+  const snapshot = await loadKyoboRealtimeSnapshot();
+  const entries = categoryCode
+    ? snapshot.entries.filter((entry) => entry.categoryCode === categoryCode)
+    : snapshot.entries;
+
+  return {
+    items: dedupeByRank(entries.map((entry) => entry.item)).slice(0, RANK_LIMIT),
+    sourceStamp: snapshot.sourceStamp
   };
 }
 
@@ -673,10 +922,17 @@ function mapYes24Block(block) {
 
 async function fetchYes24List(url, options = {}) {
   const limit = options.limit || STANDARD_LIMIT;
-  const html = await fetchText(url, {
-    accept: "text/html,application/xhtml+xml"
-  });
-  const blocks = html.split(/<li class="[^"]*" data-goods-no="/).slice(1);
+  const pages = options.pages || 1;
+  const htmlPages = await Promise.all(
+    Array.from({ length: pages }, (_, index) =>
+      fetchText(makeYes24PageUrl(url, index + 1), {
+        accept: "text/html,application/xhtml+xml"
+      })
+    )
+  );
+  const blocks = htmlPages.flatMap((html) =>
+    html.split(/<li class="[^"]*" data-goods-no="/).slice(1)
+  );
 
   return {
     items: dedupeByRank(blocks.map(mapYes24Block).filter(Boolean)).slice(0, limit),
@@ -785,6 +1041,102 @@ async function fetchAladinList(url, options = {}) {
   };
 }
 
+function makePublisherCatalogUrl() {
+  const url = new URL("https://www.aladin.co.kr/search/wsearchresult.aspx");
+  url.searchParams.set("SearchTarget", "Book");
+  url.searchParams.set("KeyPublisher", WATCH_PUBLISHER_NAME);
+  url.searchParams.set("SortOrder", "5");
+  url.searchParams.set("ViewRowCount", "50");
+  url.searchParams.set("ViewType", "Detail");
+  return url.toString();
+}
+
+function mapPublisherCatalogBlock(block) {
+  const title = stripTags(extract(block, /<a [^>]*class="bo3"[^>]*>([\s\S]*?)<\/a>/));
+  const publisherLine = block.match(
+    /PublisherSearch=[^"']*"[^>]*>([\s\S]*?)<\/A>\s*\|\s*([^<]+)/i
+  );
+
+  if (!title || !publisherLine || !isWatchedPublisher(stripTags(publisherLine[1]))) {
+    return null;
+  }
+
+  return {
+    title,
+    publishedAt: normalizePublishedAt(stripTags(publisherLine[2])),
+    link: normalizeUrl(
+      extract(block, /<a href="([^"]*wproduct\.aspx\?ItemId=\d+)"/),
+      "https://www.aladin.co.kr"
+    )
+  };
+}
+
+async function fetchPublisherCatalog() {
+  const html = await fetchText(makePublisherCatalogUrl(), {
+    accept: "text/html,application/xhtml+xml"
+  });
+  const blocks = html.split(/<div class="ss_book_box"[^>]*>/).slice(1);
+  const seen = new Set();
+  const books = blocks
+    .map(mapPublisherCatalogBlock)
+    .filter(Boolean)
+    .filter((book) => {
+      const key = normalizeTitleKey(book.title);
+
+      if (seen.has(key)) {
+        return false;
+      }
+
+      seen.add(key);
+      return true;
+    });
+
+  if (!books.length) {
+    throw new Error(`${WATCH_PUBLISHER_NAME} 도서 목록을 찾지 못했습니다.`);
+  }
+
+  return books
+    .sort((a, b) => String(b.publishedAt).localeCompare(String(a.publishedAt)))
+    .slice(0, FOCUS_CATALOG_LIMIT);
+}
+
+let publisherCatalogCache = null;
+
+async function loadPublisherCatalog() {
+  const now = Date.now();
+
+  if (publisherCatalogCache && publisherCatalogCache.expiresAt > now) {
+    return publisherCatalogCache.books;
+  }
+
+  try {
+    const books = await fetchPublisherCatalog();
+    publisherCatalogCache = { books, expiresAt: now + FOCUS_CATALOG_TTL_MS };
+    await writePersistedSource(
+      FOCUS_CATALOG_ID,
+      { items: books },
+      publisherCatalogCache.expiresAt
+    );
+    return books;
+  } catch (error) {
+    console.error("[catalog] 신간 목록 수집 실패:", error);
+    const retryAt = now + FOCUS_CATALOG_RETRY_MS;
+
+    if (publisherCatalogCache) {
+      publisherCatalogCache = { ...publisherCatalogCache, expiresAt: retryAt };
+      return publisherCatalogCache.books;
+    }
+
+    const persisted = await readPersistedSource(FOCUS_CATALOG_ID);
+    const books = persisted
+      ? persisted.payload.items
+      : FOCUS_BOOK_TITLES.map((title) => ({ title, publishedAt: "", link: "" }));
+
+    publisherCatalogCache = { books, expiresAt: retryAt };
+    return books;
+  }
+}
+
 function buildPayload(definition, result, options = {}) {
   const now = new Date();
   return {
@@ -794,7 +1146,12 @@ function buildPayload(definition, result, options = {}) {
     typeLabel: definition.typeLabel,
     group: definition.group || (definition.realtime ? "overall-realtime" : "standard"),
     categoryName: definition.categoryName || "",
+    period: definition.period || "",
+    periodLabel: definition.period ? PERIOD_LABELS[definition.period] : "",
     realtime: definition.realtime,
+    paginate: definition.paginate !== false,
+    derived: definition.derived === true,
+    note: definition.note || "",
     sourceUrl: definition.sourceUrl,
     updatedAt: now.toISOString(),
     nextRefreshAt: new Date(now.getTime() + definition.ttlMs).toISOString(),
@@ -807,9 +1164,14 @@ function buildPayload(definition, result, options = {}) {
   };
 }
 
+// 다른 목록에서 파생된 목록은 같은 책을 같은 순위로 다시 담고 있으므로 집계에서 제외한다.
+function getSourceLists(section) {
+  return section.lists.filter((list) => !list.derived);
+}
+
 function buildPublisherAlerts(sections) {
   const items = sections.flatMap((section) =>
-    section.lists.flatMap((list) =>
+    getSourceLists(section).flatMap((list) =>
       list.items
         .filter((item) => isWatchedPublisher(item.publisher))
         .map((item) => ({
@@ -835,30 +1197,33 @@ function buildPublisherAlerts(sections) {
   };
 }
 
-function buildFocusBooks(sections) {
+function buildFocusBooks(sections, catalog = []) {
   const booksByTitle = new Map(
-    FOCUS_BOOK_TITLES.map((title) => [
-      normalizeTitleKey(title),
+    catalog.map((book) => [
+      normalizeTitleKey(book.title),
       {
-        title,
+        title: book.title,
+        publishedAt: book.publishedAt || "",
+        link: book.link || "",
         appearances: []
       }
     ])
   );
+  const catalogKeys = [...booksByTitle.keys()];
 
   sections.forEach((section) => {
-    section.lists.forEach((list) => {
+    getSourceLists(section).forEach((list) => {
       list.items
         .filter((item) => isWatchedPublisher(item.publisher))
         .forEach((item) => {
-          const matchedSeed = FOCUS_BOOK_TITLES.find((title) =>
-            matchesFocusTitle(item.title, title)
-          );
-          const key = normalizeTitleKey(matchedSeed || item.title);
+          const key =
+            findCatalogKey(item.title, catalogKeys) || normalizeTitleKey(item.title);
 
           if (!booksByTitle.has(key)) {
             booksByTitle.set(key, {
               title: item.title,
+              publishedAt: "",
+              link: "",
               appearances: []
             });
           }
@@ -868,6 +1233,7 @@ function buildFocusBooks(sections) {
             storeName: section.name,
             listId: list.id,
             listName: list.name,
+            listUrl: list.sourceUrl || "",
             group: list.group || "",
             categoryName: list.categoryName || "",
             realtime: Boolean(list.realtime),
@@ -891,8 +1257,7 @@ function buildFocusBooks(sections) {
         ? Math.min(...rankBasis.map((item) => item.rank).filter(Boolean))
         : null;
       const latestPublishedAt =
-        appearances
-          .map((item) => item.publishedAt)
+        [book.publishedAt, ...appearances.map((item) => item.publishedAt)]
           .filter(Boolean)
           .sort()
           .at(-1) || "";
@@ -907,6 +1272,7 @@ function buildFocusBooks(sections) {
 
       return {
         title: book.title,
+        link: book.link || appearances.find((item) => item.link)?.link || "",
         bestRank,
         latestPublishedAt,
         appearanceCount: appearances.length,
@@ -914,20 +1280,20 @@ function buildFocusBooks(sections) {
       };
     })
     .sort((a, b) => {
+      // 순위에 든 도서를 앞으로 모으고, 출간 최신순은 그 안에서만 적용한다.
+      const rankedOrder =
+        Number(b.appearanceCount > 0) - Number(a.appearanceCount > 0);
+
+      if (rankedOrder !== 0) {
+        return rankedOrder;
+      }
+
       const publishedOrder = String(b.latestPublishedAt || "").localeCompare(
         String(a.latestPublishedAt || "")
       );
 
       if (publishedOrder !== 0) {
         return publishedOrder;
-      }
-
-      if (a.bestRank !== null && b.bestRank === null) {
-        return -1;
-      }
-
-      if (a.bestRank === null && b.bestRank !== null) {
-        return 1;
       }
 
       if (a.bestRank !== b.bestRank) {
@@ -1000,13 +1366,16 @@ async function loadSource(id, options = {}) {
 }
 
 async function buildDashboard(forceIds = []) {
-  const lists = await Promise.all(
-    SOURCES.map((source) =>
-      loadSource(source.id, {
-        force: forceIds.includes(source.id)
-      })
-    )
-  );
+  const [lists, catalog] = await Promise.all([
+    Promise.all(
+      SOURCES.map((source) =>
+        loadSource(source.id, {
+          force: forceIds.includes(source.id)
+        })
+      )
+    ),
+    loadPublisherCatalog()
+  ]);
 
   const sections = STORES.map((store) => ({
     ...store,
@@ -1015,9 +1384,10 @@ async function buildDashboard(forceIds = []) {
 
   return {
     generatedAt: new Date().toISOString(),
+    assetVersion: await getAssetVersion(),
     sections,
     alerts: buildPublisherAlerts(sections),
-    focusBooks: buildFocusBooks(sections)
+    focusBooks: buildFocusBooks(sections, catalog)
   };
 }
 
@@ -1069,6 +1439,26 @@ function getMimeType(filePath) {
     default:
       return "application/octet-stream";
   }
+}
+
+const ASSET_FILES = ["index.html", "app.js", "styles.css"];
+
+// 대시보드는 탭을 켜둔 채로 데이터만 자동 갱신하기 때문에, 프런트엔드 파일이
+// 바뀌어도 열린 탭은 예전 코드를 계속 쓴다. 버전을 payload에 실어 보내서
+// 클라이언트가 스스로 새로고침하게 한다.
+async function getAssetVersion() {
+  const stamps = await Promise.all(
+    ASSET_FILES.map(async (name) => {
+      try {
+        const info = await fs.stat(path.join(PUBLIC_DIR, name));
+        return `${name}:${Math.round(info.mtimeMs)}`;
+      } catch (error) {
+        return `${name}:0`;
+      }
+    })
+  );
+
+  return stamps.join("|");
 }
 
 async function serveStatic(response, requestPath) {

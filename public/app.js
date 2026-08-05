@@ -1,5 +1,6 @@
 const state = {
   dashboard: null,
+  assetVersion: "",
   search: "",
   selectedStore: "all",
   loading: false,
@@ -8,6 +9,7 @@ const state = {
   hasLoadedOnce: false,
   mobileRealtimeStore: "kyobo",
   categoryStore: "yes24",
+  categoryPeriod: "realtime",
   categoryListByStore: {},
   rankPages: {}
 };
@@ -29,6 +31,11 @@ const WATCH_PUBLISHER_NAME = "상상스퀘어";
 const WATCH_PUBLISHER_KEY = WATCH_PUBLISHER_NAME.replace(/\s+/g, "").toLowerCase();
 const STORE_ALERT_ORDER = ["kyobo", "yes24", "aladin"];
 const RANK_PAGE_SIZE = 20;
+const CATEGORY_PERIODS = [
+  { key: "realtime", label: "실시간" },
+  { key: "daily", label: "일간" },
+  { key: "weekly", label: "주간" }
+];
 
 function escapeHtml(value) {
   return String(value || "")
@@ -179,10 +186,18 @@ function filterBySelectedStore(items) {
 }
 
 function getVisibleFocusBooks() {
-  return (state.dashboard?.focusBooks || []).map((book) => ({
-    ...book,
-    appearances: filterBySelectedStore(book.appearances || [])
-  }));
+  return (
+    (state.dashboard?.focusBooks || [])
+      .map((book) => ({
+        ...book,
+        appearances: filterBySelectedStore(book.appearances || [])
+      }))
+      // 서점을 골라 보면 노출이 사라지는 책이 생기므로, 화면 기준으로 다시 뒤로 보낸다.
+      // 정렬이 안정적이라 각 묶음 안의 출간 최신순은 그대로 유지된다.
+      .sort(
+        (a, b) => Number(b.appearances.length > 0) - Number(a.appearances.length > 0)
+      )
+  );
 }
 
 function searchableText(item) {
@@ -232,7 +247,8 @@ function renderItem(item) {
 }
 
 function getRankPageData(list, items) {
-  const paged = list.realtime || items.length > RANK_PAGE_SIZE;
+  const paged =
+    list.paginate !== false && (list.realtime || items.length > RANK_PAGE_SIZE);
 
   if (!paged || state.search) {
     return {
@@ -313,7 +329,9 @@ function renderCard(list) {
     ? `<p class="panel-note panel-note-error">${escapeHtml(list.error)}</p>`
     : list.warning
       ? `<p class="panel-note panel-note-warning">${escapeHtml(list.warning)}</p>`
-      : "";
+      : list.note
+        ? `<p class="panel-note panel-note-info">${escapeHtml(list.note)}</p>`
+        : "";
 
   const content =
     items.length > 0
@@ -544,7 +562,7 @@ function renderFocusBoard() {
 function renderOverview(visibleSections, sections) {
   const lists = flattenLists(visibleSections);
   const overallRealtimeLists = lists.filter((list) => list.group === "overall-realtime");
-  const categoryRealtimeLists = lists.filter((list) => list.group === "category-realtime");
+  const categoryRealtimeLists = lists.filter((list) => list.group === "category");
   const standardLists = lists.filter((list) => list.group === "standard" || !list.group);
   const realtimeTotal = overallRealtimeLists.reduce((sum, list) => sum + (list.itemCount || 0), 0);
   const focusTotal = getVisibleFocusBooks().reduce(
@@ -609,22 +627,41 @@ function renderOverview(visibleSections, sections) {
   `;
 }
 
-function bestRankFor(appearances, predicate) {
-  const ranks = appearances
-    .filter(predicate)
-    .map((item) => Number(item.rank))
-    .filter((rank) => Number.isFinite(rank) && rank > 0);
+function bestAppearanceFor(appearances, predicate) {
+  const ranked = appearances.filter((item) => {
+    const rank = Number(item.rank);
+    return predicate(item) && Number.isFinite(rank) && rank > 0;
+  });
 
-  return ranks.length ? Math.min(...ranks) : null;
+  if (!ranked.length) {
+    return null;
+  }
+
+  return ranked.reduce((best, item) =>
+    Number(item.rank) < Number(best.rank) ? item : best
+  );
 }
 
-function renderFocusRank(label, rank) {
-  return `
-    <div class="focus-rank-metric ${rank ? "" : "muted"}">
-      <span>${escapeHtml(label)}</span>
-      <strong>${rank ? `${escapeHtml(rank)}위` : "순위권 밖"}</strong>
-    </div>
+function renderFocusRank(label, appearance) {
+  if (!appearance) {
+    return `
+      <div class="focus-rank-metric muted">
+        <span>${escapeHtml(label)}</span>
+        <strong>순위권 밖</strong>
+      </div>
+    `;
+  }
+
+  const source = [appearance.storeName, appearance.listName].filter(Boolean).join(" · ");
+  const body = `
+    <span>${escapeHtml(label)}</span>
+    <strong>${escapeHtml(appearance.rank)}위</strong>
+    <em class="focus-rank-source">${escapeHtml(source)}</em>
   `;
+
+  return appearance.listUrl
+    ? `<a class="focus-rank-metric" href="${escapeHtml(appearance.listUrl)}" target="_blank" rel="noreferrer" title="${escapeHtml(`${source} 순위 페이지 열기`)}">${body}</a>`
+    : `<div class="focus-rank-metric">${body}</div>`;
 }
 
 function formatPublishedDate(value) {
@@ -644,7 +681,7 @@ function renderFocusBoardV2() {
         <div>
           <div class="section-label">Sangsang Square</div>
           <h2>상상스퀘어 도서 순위</h2>
-          <p>수집된 전체·분야별 순위에서 상상스퀘어 도서를 찾아 출간 최신순으로 표시합니다.</p>
+          <p>상상스퀘어 신간을 자동으로 불러와 수집된 순위에서 노출을 찾고, 출간 최신순으로 표시합니다.</p>
         </div>
         <span class="section-count">${escapeHtml(focusBooks.length)}종 추적</span>
       </div>
@@ -654,7 +691,7 @@ function renderFocusBoardV2() {
             const appearances = [...(book.appearances || [])].sort((a, b) => {
               const groupOrder = {
                 "overall-realtime": 0,
-                "category-realtime": 1,
+                category: 1,
                 standard: 2
               };
               return (
@@ -662,13 +699,13 @@ function renderFocusBoardV2() {
                 getRankValue(a.rank) - getRankValue(b.rank)
               );
             });
-            const overallRank = bestRankFor(
+            const overallBest = bestAppearanceFor(
               appearances,
               (item) => item.group === "overall-realtime"
             );
-            const categoryRank = bestRankFor(
+            const categoryBest = bestAppearanceFor(
               appearances,
-              (item) => item.group === "category-realtime"
+              (item) => item.group === "category"
             );
 
             return `
@@ -681,17 +718,21 @@ function renderFocusBoardV2() {
                     ${escapeHtml(formatPublishedDate(book.latestPublishedAt))} · ${escapeHtml(appearances.length)}곳 노출
                   </span>
                 </div>
-                <h3 class="focus-title">${escapeHtml(book.title)}</h3>
+                <h3 class="focus-title">
+                  ${book.link
+                    ? `<a href="${escapeHtml(book.link)}" target="_blank" rel="noreferrer">${escapeHtml(book.title)}</a>`
+                    : escapeHtml(book.title)}
+                </h3>
                 <div class="focus-rank-grid">
-                  ${renderFocusRank("전체 실시간", overallRank)}
-                  ${renderFocusRank("분야 최고", categoryRank)}
+                  ${renderFocusRank("전체 실시간", overallBest)}
+                  ${renderFocusRank("분야 최고", categoryBest)}
                 </div>
                 <div class="focus-appearances">
                   ${appearances.length
                     ? appearances
                         .slice(0, 6)
                         .map((item) => {
-                          const label = `${item.storeName} · ${item.categoryName || item.listName} · ${item.rank}위`;
+                          const label = `${item.storeName} · ${item.listName} · ${item.rank}위`;
                           return item.link
                             ? `<a class="focus-chip" href="${escapeHtml(item.link)}" target="_blank" rel="noreferrer">${escapeHtml(label)}</a>`
                             : `<span class="focus-chip">${escapeHtml(label)}</span>`;
@@ -708,7 +749,13 @@ function renderFocusBoardV2() {
   `;
 }
 
-function renderStoreSwitcher(lists, selectedStore, dataAttribute, label) {
+function renderStoreSwitcher(
+  lists,
+  selectedStore,
+  dataAttribute,
+  label,
+  getSubLabel = () => "TOP 100"
+) {
   return `
     <div class="store-switcher" aria-label="${escapeHtml(label)}">
       ${lists
@@ -722,7 +769,7 @@ function renderStoreSwitcher(lists, selectedStore, dataAttribute, label) {
               style="--switch-accent:${escapeHtml(list.accent)}"
             >
               ${escapeHtml(list.storeName)}
-              <span>TOP 100</span>
+              <span>${escapeHtml(getSubLabel(list))}</span>
             </button>
           `
         )
@@ -776,6 +823,37 @@ function renderRealtimeBoard(lists) {
   `;
 }
 
+function getCategoryListKey(storeId, period) {
+  return `${storeId}:${period}`;
+}
+
+function renderCategoryPeriodSwitcher(lists, accent) {
+  const available = CATEGORY_PERIODS.filter((period) =>
+    lists.some((list) => list.period === period.key)
+  );
+
+  const accentStyle = accent ? ` style="--switch-accent:${escapeHtml(accent)}"` : "";
+
+  return `
+    <div class="category-period-switcher" aria-label="분야별 순위 기간 선택"${accentStyle}>
+      ${available
+        .map(
+          (period) => `
+            <button
+              type="button"
+              class="category-period-button ${state.categoryPeriod === period.key ? "active" : ""}"
+              data-category-period="${escapeHtml(period.key)}"
+              aria-pressed="${state.categoryPeriod === period.key ? "true" : "false"}"
+            >
+              ${escapeHtml(period.label)}
+            </button>
+          `
+        )
+        .join("")}
+    </div>
+  `;
+}
+
 function renderCategoryBoard(lists) {
   if (!lists.length) {
     return `
@@ -783,11 +861,11 @@ function renderCategoryBoard(lists) {
         <div class="section-heading">
           <div>
             <div class="section-label">Categories</div>
-            <h2>분야별 실시간 순위</h2>
-            <p>분야별 실시간은 예스24와 알라딘에서 제공합니다.</p>
+            <h2>분야별 순위</h2>
+            <p>분야별 순위는 교보문고, 예스24, 알라딘에서 볼 수 있습니다.</p>
           </div>
         </div>
-        <div class="section-empty">상단에서 예스24 또는 알라딘을 선택하면 분야별 실시간 순위를 볼 수 있습니다.</div>
+        <div class="section-empty">상단에서 서점을 선택하면 분야별 순위를 볼 수 있습니다.</div>
       </section>
     `;
   }
@@ -800,24 +878,40 @@ function renderCategoryBoard(lists) {
     state.categoryStore = storeLists[0].storeId;
   }
 
-  const activeLists = lists.filter((list) => list.storeId === state.categoryStore);
-  let selectedListId = state.categoryListByStore[state.categoryStore];
+  const storeScopedLists = lists.filter((list) => list.storeId === state.categoryStore);
+
+  if (!storeScopedLists.some((list) => list.period === state.categoryPeriod)) {
+    state.categoryPeriod = storeScopedLists[0].period;
+  }
+
+  const activeLists = storeScopedLists.filter(
+    (list) => list.period === state.categoryPeriod
+  );
+  const listKey = getCategoryListKey(state.categoryStore, state.categoryPeriod);
+  let selectedListId = state.categoryListByStore[listKey];
 
   if (!activeLists.some((list) => list.id === selectedListId)) {
     selectedListId = activeLists[0].id;
-    state.categoryListByStore[state.categoryStore] = selectedListId;
+    state.categoryListByStore[listKey] = selectedListId;
   }
 
   const selectedIndex = activeLists.findIndex((list) => list.id === selectedListId);
   const selectedList = activeLists[selectedIndex];
+  const categoryCountByStore = lists.reduce((counts, list) => {
+    if (list.period === state.categoryPeriod) {
+      counts[list.storeId] = (counts[list.storeId] || 0) + 1;
+    }
+
+    return counts;
+  }, {});
 
   return `
     <section class="section-block category-board" id="category-rankings">
       <div class="section-heading">
         <div>
           <div class="section-label">Categories</div>
-          <h2>분야별 실시간 순위</h2>
-          <p>서점을 고르고 분야를 순서대로 넘겨보세요.</p>
+          <h2>분야별 순위</h2>
+          <p>서점과 기간을 고르고 분야를 순서대로 넘겨보세요.</p>
         </div>
         <span class="section-count">${escapeHtml(selectedIndex + 1)} / ${escapeHtml(activeLists.length)}</span>
       </div>
@@ -825,8 +919,10 @@ function renderCategoryBoard(lists) {
         storeLists,
         state.categoryStore,
         "data-category-store",
-        "분야별 순위 서점 선택"
+        "분야별 순위 서점 선택",
+        (list) => `${categoryCountByStore[list.storeId] || 0}개 분야`
       )}
+      ${renderCategoryPeriodSwitcher(storeScopedLists, selectedList.accent)}
       <div class="category-selector" aria-label="분야 선택">
         ${activeLists
           .map(
@@ -855,24 +951,48 @@ function renderCategoryBoard(lists) {
   `;
 }
 
-function renderStandardBoard(lists) {
+function sortByStoreOrder(lists) {
+  return [...lists].sort(
+    (a, b) =>
+      STORE_ALERT_ORDER.indexOf(a.storeId) - STORE_ALERT_ORDER.indexOf(b.storeId)
+  );
+}
+
+function renderOverallPeriodBoard(lists, options) {
   if (!lists.length) {
     return "";
   }
 
+  const { id, label, title, description, extraLists = [], extraTitle = "" } = options;
+  const totalCollected = [...lists, ...extraLists].reduce(
+    (sum, list) => sum + (list.itemCount || 0),
+    0
+  );
+
   return `
-    <section class="section-block standard-board" id="standard-rankings">
+    <section class="section-block standard-board" id="${escapeHtml(id)}">
       <div class="section-heading">
         <div>
-          <div class="section-label">Reference</div>
-          <h2>일간·주간·월간 참고 순위</h2>
-          <p>실시간과 분야별 확인이 끝난 뒤 참고하는 순위입니다.</p>
+          <div class="section-label">${escapeHtml(label)}</div>
+          <h2>${escapeHtml(title)}</h2>
+          <p>${escapeHtml(description)}</p>
         </div>
-        <span class="section-count">${escapeHtml(lists.length)}개 목록</span>
+        <div class="realtime-total">
+          <strong>${escapeHtml(totalCollected)}</strong>
+          <span>권 수집</span>
+        </div>
       </div>
       <div class="standard-grid">
-        ${lists.map(renderCard).join("")}
+        ${sortByStoreOrder(lists).map(renderCard).join("")}
       </div>
+      ${extraLists.length
+        ? `
+          <div class="board-subheading">${escapeHtml(extraTitle)}</div>
+          <div class="standard-grid">
+            ${sortByStoreOrder(extraLists).map(renderCard).join("")}
+          </div>
+        `
+        : ""}
     </section>
   `;
 }
@@ -880,15 +1000,29 @@ function renderStandardBoard(lists) {
 function renderDashboardSections(visibleSections) {
   const lists = flattenLists(visibleSections);
   const overallRealtimeLists = lists.filter((list) => list.group === "overall-realtime");
-  const categoryRealtimeLists = lists.filter((list) => list.group === "category-realtime");
+  const categoryRealtimeLists = lists.filter((list) => list.group === "category");
   const standardLists = lists.filter((list) => list.group === "standard" || !list.group);
+  const byPeriod = (period) => standardLists.filter((list) => list.period === period);
 
   return `
     <div class="dashboard-stack">
       ${renderFocusBoardV2()}
       ${renderRealtimeBoard(overallRealtimeLists)}
       ${renderCategoryBoard(categoryRealtimeLists)}
-      ${renderStandardBoard(standardLists)}
+      ${renderOverallPeriodBoard(byPeriod("daily"), {
+        id: "daily-rankings",
+        label: "Daily",
+        title: "전체 서점 일간 순위",
+        description: "서점 3곳의 일간 베스트를 100위까지 나란히 봅니다."
+      })}
+      ${renderOverallPeriodBoard(byPeriod("weekly"), {
+        id: "weekly-rankings",
+        label: "Weekly",
+        title: "전체 서점 주간 순위",
+        description: "서점 3곳의 주간 베스트를 100위까지 나란히 봅니다.",
+        extraLists: byPeriod("monthly"),
+        extraTitle: "월간 베스트"
+      })}
     </div>
   `;
 }
@@ -1017,7 +1151,21 @@ async function loadDashboard(refresh = "") {
       throw new Error(`HTTP ${response.status}`);
     }
 
-    state.dashboard = await response.json();
+    const payload = await response.json();
+
+    // 화면을 켜둔 채 프런트엔드 파일이 바뀌면 예전 코드로 새 데이터를 그리게 되므로,
+    // 버전이 달라진 순간 한 번 새로고침한다.
+    if (
+      state.assetVersion &&
+      payload.assetVersion &&
+      payload.assetVersion !== state.assetVersion
+    ) {
+      window.location.reload();
+      return;
+    }
+
+    state.assetVersion = payload.assetVersion || "";
+    state.dashboard = payload;
     renderDashboard();
     scheduleDashboardRefresh();
     if (state.hasLoadedOnce) {
@@ -1122,10 +1270,18 @@ function bindEvents() {
       return;
     }
 
+    const categoryPeriodButton = event.target.closest("[data-category-period]");
+    if (categoryPeriodButton) {
+      state.categoryPeriod = categoryPeriodButton.dataset.categoryPeriod;
+      renderDashboard();
+      return;
+    }
+
+    const listKey = getCategoryListKey(state.categoryStore, state.categoryPeriod);
+
     const categoryListButton = event.target.closest("[data-category-list]");
     if (categoryListButton) {
-      state.categoryListByStore[state.categoryStore] =
-        categoryListButton.dataset.categoryList;
+      state.categoryListByStore[listKey] = categoryListButton.dataset.categoryList;
       renderDashboard();
       return;
     }
@@ -1136,10 +1292,11 @@ function bindEvents() {
         getVisibleSections(state.dashboard.sections)
       ).filter(
         (list) =>
-          list.group === "category-realtime" &&
-          list.storeId === state.categoryStore
+          list.group === "category" &&
+          list.storeId === state.categoryStore &&
+          list.period === state.categoryPeriod
       );
-      const selectedId = state.categoryListByStore[state.categoryStore];
+      const selectedId = state.categoryListByStore[listKey];
       const currentIndex = Math.max(
         0,
         lists.findIndex((list) => list.id === selectedId)
@@ -1153,7 +1310,7 @@ function bindEvents() {
       );
 
       if (lists[nextIndex]) {
-        state.categoryListByStore[state.categoryStore] = lists[nextIndex].id;
+        state.categoryListByStore[listKey] = lists[nextIndex].id;
         renderDashboard();
       }
     }

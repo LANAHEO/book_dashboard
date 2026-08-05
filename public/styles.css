@@ -891,6 +891,12 @@ body {
   color: var(--danger);
 }
 
+.panel-note-info {
+  background: var(--surface-muted);
+  border: 1px solid var(--line-soft);
+  color: var(--muted-strong);
+}
+
 @media (max-width: 1100px) {
   .masthead {
     grid-template-columns: 1fr;
@@ -1533,6 +1539,33 @@ a {
   margin-bottom: 10px;
 }
 
+.category-period-switcher {
+  display: inline-flex;
+  gap: 4px;
+  margin-bottom: 10px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.category-period-button {
+  min-height: 34px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--muted-strong);
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.category-period-button.active {
+  background: var(--switch-accent, var(--primary));
+  color: #fff;
+}
+
 .category-selector {
   display: flex;
   gap: 7px;
@@ -1671,6 +1704,16 @@ a {
   letter-spacing: -0.025em;
 }
 
+.focus-title a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.focus-title a:hover,
+.focus-title a:focus-visible {
+  text-decoration: underline;
+}
+
 .focus-rank-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1679,10 +1722,17 @@ a {
 }
 
 .focus-rank-metric {
+  display: block;
   padding: 11px;
   border-radius: 12px;
   background: #18382b;
   color: #fff;
+  text-decoration: none;
+}
+
+a.focus-rank-metric:hover,
+a.focus-rank-metric:focus-visible {
+  background: #1f4a38;
 }
 
 .focus-rank-metric.muted {
@@ -1706,6 +1756,18 @@ a {
   font-size: 17px;
 }
 
+.focus-rank-source {
+  display: -webkit-box;
+  overflow: hidden;
+  margin-top: 4px;
+  font-size: 11px;
+  font-style: normal;
+  line-height: 1.3;
+  opacity: 0.8;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
 .focus-appearances {
   display: grid;
   gap: 6px;
@@ -1724,6 +1786,16 @@ a {
   grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
   gap: 12px;
   align-items: start;
+}
+
+.board-subheading {
+  margin: 18px 0 10px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+  color: var(--muted-strong);
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.02em;
 }
 
 .standard-board .rank-scroll {
@@ -1938,6 +2010,17 @@ a {
   .store-switcher-button,
   .category-selector-button {
     min-height: 44px;
+  }
+
+  .category-period-switcher {
+    display: flex;
+    width: 100%;
+  }
+
+  .category-period-button {
+    flex: 1;
+    min-height: 40px;
+    padding: 0;
   }
 
   .rank-item {

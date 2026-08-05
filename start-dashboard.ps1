@@ -7,7 +7,24 @@ $healthUrl = "http://127.0.0.1:3000/api/health"
 try {
   $health = Invoke-WebRequest -UseBasicParsing -Uri $healthUrl -TimeoutSec 3
   if ($health.StatusCode -ge 200 -and $health.StatusCode -lt 400) {
-    exit 0
+    $listenerLine = netstat -ano -p tcp |
+      Select-String -Pattern ":3000\s+.*LISTENING" |
+      Select-Object -First 1
+
+    if ($listenerLine) {
+      $serverProcessId = [int](($listenerLine.ToString().Trim() -split "\s+")[-1])
+      $runningProcess = Get-Process -Id $serverProcessId -ErrorAction SilentlyContinue
+      $serverUpdatedAt = (Get-Item $serverScript).LastWriteTime
+
+      if ($runningProcess -and $runningProcess.StartTime -ge $serverUpdatedAt) {
+        exit 0
+      }
+
+      if ($runningProcess -and $runningProcess.ProcessName -eq "node") {
+        Stop-Process -Id $serverProcessId -Force
+        Start-Sleep -Seconds 1
+      }
+    }
   }
 } catch {
   # If the local server is not reachable, we start it below.

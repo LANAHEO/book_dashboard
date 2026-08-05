@@ -10,8 +10,8 @@ Best fit if you want a public URL with a service that stays running.
 
 1. Push this folder to a GitHub repository.
 2. In Railway, create a new project from the GitHub repo.
-3. Railway can deploy this app directly from `package.json`, or from the included `Dockerfile`.
-4. Confirm the service starts with `npm start`.
+3. Railway can deploy this app from the included `Dockerfile`, or with the Streamlit start command.
+4. Confirm the service starts with `streamlit run streamlit_app.py`.
 5. Open the generated public domain.
 
 ## Render
@@ -24,7 +24,7 @@ Use this if you want a simple managed deploy flow with Blueprint support.
 4. Deploy the web service.
 5. Open the generated `onrender.com` URL.
 
-Note: `render.yaml` uses the `starter` plan because Render free web services spin down after idle time.
+Note: `render.yaml` uses the `free` plan. Render Free web services spin down after 15 minutes without inbound traffic and can take about 1 minute to spin back up.
 
 ## Custom domain
 
@@ -36,6 +36,7 @@ After the first deploy succeeds:
 
 ## Runtime requirements
 
-- Node.js 20 or newer
+- Python 3.12 or newer
+- Dependencies are installed from `requirements.txt`
 - The app binds to `0.0.0.0`
-- The app exposes `/api/health` for health checks
+- Streamlit exposes `/_stcore/health` for health checks
