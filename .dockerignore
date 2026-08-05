@@ -1,5 +1,13 @@
 .git
 .cache
+logs
 node_modules
-npm-debug.log
+npm-debug.log*
 .DS_Store
+.env
+.env.*
+*.md
+probe.js
+start-*.cmd
+start-*.ps1
+start-*.vbs

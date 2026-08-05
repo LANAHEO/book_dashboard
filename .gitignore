@@ -1,8 +1,9 @@
 node_modules/
-.venv/
-__pycache__/
 .cache/
 logs/
 .env
 .env.*
 npm-debug.log*
+.DS_Store
+probe.js
+*.log

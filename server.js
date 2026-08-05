@@ -1169,34 +1169,6 @@ function getSourceLists(section) {
   return section.lists.filter((list) => !list.derived);
 }
 
-function buildPublisherAlerts(sections) {
-  const items = sections.flatMap((section) =>
-    getSourceLists(section).flatMap((list) =>
-      list.items
-        .filter((item) => isWatchedPublisher(item.publisher))
-        .map((item) => ({
-          publisherName: WATCH_PUBLISHER_NAME,
-          storeId: section.id,
-          storeName: section.name,
-          listId: list.id,
-          listName: list.name,
-          rank: item.rank,
-          title: item.title,
-          link: item.link,
-          image: item.image,
-          publisher: item.publisher || ""
-        }))
-    )
-  );
-
-  return {
-    publisherName: WATCH_PUBLISHER_NAME,
-    totalCount: items.length,
-    uniqueTitleCount: new Set(items.map((item) => `${item.title}::${item.publisher}`)).size,
-    items
-  };
-}
-
 function buildFocusBooks(sections, catalog = []) {
   const booksByTitle = new Map(
     catalog.map((book) => [
@@ -1386,7 +1358,6 @@ async function buildDashboard(forceIds = []) {
     generatedAt: new Date().toISOString(),
     assetVersion: await getAssetVersion(),
     sections,
-    alerts: buildPublisherAlerts(sections),
     focusBooks: buildFocusBooks(sections, catalog)
   };
 }

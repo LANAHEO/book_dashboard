@@ -14,7 +14,8 @@ What can stay free:
 
 ## What this means
 
-This dashboard is not a static site. It needs the local Node server in [server.js](/C:/Users/fksgm/Documents/Codex/2026-04-21-24-https-store-kyobobook-co-kr/server.js) to stay running.
+This dashboard is not a static site. It needs the local Node server in
+[server.js](server.js) to stay running.
 
 So the cost-minimal setup is:
 
@@ -69,7 +70,7 @@ setx CLOUDFLARE_TUNNEL_TOKEN "YOUR_TUNNEL_TOKEN"
 Then open a new terminal and run:
 
 ```powershell
-C:\Users\fksgm\Documents\Codex\2026-04-21-24-https-store-kyobobook-co-kr\start-public-dashboard.cmd
+.\start-public-dashboard.cmd
 ```
 
 This will:
