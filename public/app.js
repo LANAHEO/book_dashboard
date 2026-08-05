@@ -1,6 +1,7 @@
 const state = {
   dashboard: null,
   assetVersion: "",
+  activeView: "focus",
   search: "",
   selectedStore: "all",
   loading: false,
@@ -36,6 +37,13 @@ const CATEGORY_PERIODS = [
   { key: "daily", label: "일간" },
   { key: "weekly", label: "주간" }
 ];
+const VIEW_LABELS = {
+  focus: "상상스퀘어 도서 순위",
+  realtime: "전체 실시간 TOP 100",
+  category: "분야별 순위",
+  daily: "전체 서점 일간 순위",
+  weekly: "전체 서점 주간 순위"
+};
 
 function escapeHtml(value) {
   return String(value || "")
@@ -999,30 +1007,35 @@ function renderOverallPeriodBoard(lists, options) {
 
 function renderDashboardSections(visibleSections) {
   const lists = flattenLists(visibleSections);
-  const overallRealtimeLists = lists.filter((list) => list.group === "overall-realtime");
-  const categoryRealtimeLists = lists.filter((list) => list.group === "category");
   const standardLists = lists.filter((list) => list.group === "standard" || !list.group);
   const byPeriod = (period) => standardLists.filter((list) => list.period === period);
 
-  return `
-    <div class="dashboard-stack">
-      ${renderFocusBoardV2()}
-      ${renderRealtimeBoard(overallRealtimeLists)}
-      ${renderCategoryBoard(categoryRealtimeLists)}
-      ${renderOverallPeriodBoard(byPeriod("daily"), {
+  const views = {
+    focus: () => renderFocusBoardV2(),
+    realtime: () =>
+      renderRealtimeBoard(lists.filter((list) => list.group === "overall-realtime")),
+    category: () => renderCategoryBoard(lists.filter((list) => list.group === "category")),
+    daily: () =>
+      renderOverallPeriodBoard(byPeriod("daily"), {
         id: "daily-rankings",
         label: "Daily",
         title: "전체 서점 일간 순위",
         description: "서점 3곳의 일간 베스트를 100위까지 나란히 봅니다."
-      })}
-      ${renderOverallPeriodBoard(byPeriod("weekly"), {
+      }),
+    weekly: () =>
+      renderOverallPeriodBoard(byPeriod("weekly"), {
         id: "weekly-rankings",
         label: "Weekly",
         title: "전체 서점 주간 순위",
         description: "서점 3곳의 주간 베스트를 100위까지 나란히 봅니다.",
         extraLists: byPeriod("monthly"),
         extraTitle: "월간 베스트"
-      })}
+      })
+  };
+
+  return `
+    <div class="dashboard-stack">
+      ${(views[state.activeView] || views.focus)()}
     </div>
   `;
 }
@@ -1104,12 +1117,23 @@ function updateSummary() {
 
   const visibleLists = flattenLists(getVisibleSections(state.dashboard.sections));
   const totalBooks = visibleLists.reduce((sum, list) => sum + list.itemCount, 0);
+  const viewLabel = VIEW_LABELS[state.activeView] || "";
   const searchSuffix = state.search
     ? ` 현재 검색어: "${elements.searchInput.value.trim()}"`
     : "";
 
   elements.summaryText.textContent =
-    `현재 ${totalBooks}권을 표시 중입니다.${searchSuffix}`;
+    `${viewLabel} 화면입니다. 수집된 도서는 모두 ${totalBooks}권입니다.${searchSuffix}`;
+}
+
+function syncViewNav() {
+  elements.viewNav?.querySelectorAll("[data-view]").forEach((button) => {
+    if (button.dataset.view === state.activeView) {
+      button.setAttribute("aria-current", "true");
+    } else {
+      button.removeAttribute("aria-current");
+    }
+  });
 }
 
 function renderDashboard() {
@@ -1215,20 +1239,16 @@ function scheduleDashboardRefresh() {
 
 function bindEvents() {
   elements.viewNav?.addEventListener("click", (event) => {
-    const button = event.target.closest("[data-scroll-target]");
-    if (!button) {
+    const button = event.target.closest("[data-view]");
+    if (!button || button.dataset.view === state.activeView) {
       return;
     }
 
-    elements.viewNav
-      .querySelectorAll("[data-scroll-target]")
-      .forEach((navButton) => navButton.removeAttribute("aria-current"));
-    button.setAttribute("aria-current", "true");
-
-    document.getElementById(button.dataset.scrollTarget)?.scrollIntoView({
-      behavior: "smooth",
-      block: "start"
-    });
+    state.activeView = button.dataset.view;
+    syncViewNav();
+    renderDashboard();
+    // 화면을 갈아끼우는 것이므로 스크롤은 애니메이션 없이 맨 위로 돌려놓는다.
+    window.scrollTo({ top: 0, behavior: "instant" });
   });
 
   elements.searchInput.addEventListener("input", () => {

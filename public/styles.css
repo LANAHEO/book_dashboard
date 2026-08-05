@@ -1048,8 +1048,9 @@ body {
   --radius: 16px;
 }
 
+/* 화면 전환은 탭 방식이라 스크롤 애니메이션이 필요하지 않다. */
 html {
-  scroll-behavior: smooth;
+  scroll-behavior: auto;
 }
 
 body {
