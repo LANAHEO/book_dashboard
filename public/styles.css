@@ -651,9 +651,11 @@ body {
   letter-spacing: 0.01em;
 }
 
+/* 상승은 브랜드 초록, 하락·이탈은 danger, 신규는 signal(주목색), 변화 없음은 muted.
+   전부 활성 팔레트의 토큰만 쓴다 — success/success-soft는 이 팔레트에 없다. */
 .rank-delta.is-up {
-  background: var(--success-soft);
-  color: var(--success);
+  background: var(--primary-soft);
+  color: var(--primary);
 }
 
 .rank-delta.is-down {
@@ -662,8 +664,8 @@ body {
 }
 
 .rank-delta.is-new {
-  background: var(--primary-soft);
-  color: var(--primary);
+  background: var(--signal-soft);
+  color: var(--ink);
 }
 
 .rank-delta.is-flat {
@@ -1090,6 +1092,10 @@ body {
   --primary-soft: #e7f1ec;
   --signal: #c9f15a;
   --signal-soft: #f0f9d6;
+  /* 순위 하락·이탈처럼 나쁜 신호에만 쓴다. 이 팔레트에 원래 없어서
+     순위 배지가 위쪽 폐기된 :root의 토큰을 참조하고 있었다. */
+  --danger: #b42318;
+  --danger-soft: #ffebe9;
   --shadow: 0 18px 44px rgba(24, 32, 27, 0.1);
   --shadow-soft: 0 7px 22px rgba(24, 32, 27, 0.06);
   --radius: 16px;
