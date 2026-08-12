@@ -617,7 +617,7 @@ async function readDashboardSnapshot() {
 }
 
 function rankHistoryKey(bookKey, storeId, listId) {
-  return `${bookKey} ${storeId} ${listId}`;
+  return `${bookKey} ${storeId} ${listId}`;
 }
 
 // The newest timestamp already on file. Read this BEFORE inserting the current
@@ -637,9 +637,13 @@ async function readRankHistoryAt(collectedAt) {
     return [];
   }
 
+  // Explicit limit: PostgREST applies a server-side max-rows cap when one is
+  // configured, and a silent truncation here would mark the missing entries NEW
+  // and report them as dropouts at the same time. Ask for far more than a
+  // collection can hold so a short read is a real signal, not a default.
   const rows = await supabaseRequest(
     `rank_history?collected_at=eq.${encodeURIComponent(collectedAt)}` +
-      "&select=book_key,store_id,list_id,rank,title"
+      "&select=book_key,store_id,list_id,rank,title&limit=5000"
   );
 
   return Array.isArray(rows) ? rows : [];
@@ -697,6 +701,14 @@ function applyRankDeltas(focusBooks, previousRows, nameLookup) {
 
   focusBooks.forEach((book) => {
     book.appearances.forEach((appearance) => {
+      // Match collectRankHistoryRows: an appearance we never store cannot have a
+      // previous row, so annotating it would pin a permanent NEW badge on it.
+      // Leaving it out of `seen` also means a rank we used to have and lost now
+      // reads as a dropout, which is what it is.
+      if (!book.bookKey || !appearance.rank) {
+        return;
+      }
+
       const key = rankHistoryKey(book.bookKey, appearance.storeId, appearance.listId);
       seen.add(key);
 
@@ -733,8 +745,22 @@ function applyRankDeltas(focusBooks, previousRows, nameLookup) {
     const dropped = droppedByBook.get(book.bookKey);
     if (dropped && dropped.length) {
       book.droppedOut = dropped.sort((a, b) => a.previousRank - b.previousRank);
+      droppedByBook.delete(book.bookKey);
     }
   });
+
+  // Whatever is left has no book in the current focus list to hang it on, which
+  // means the book_key itself changed between collections -- a store retitled the
+  // edition, so the same book now reads as NEW under one key while the old key's
+  // dropout goes unreported. Log it so we learn how often that actually happens
+  // before deciding whether to join on store_item_id instead.
+  if (droppedByBook.size) {
+    droppedByBook.forEach((entries, bookKey) => {
+      console.warn(
+        `[history] dropout not shown, book_key absent from focus list: ${bookKey} (${entries.length} listing(s))`
+      );
+    });
+  }
 }
 
 function buildNameLookup(sections) {
@@ -1996,31 +2022,59 @@ async function refreshStandardSources() {
 }
 
 let snapshotRebuild = null;
+let snapshotRebuildForced = null;
 
 // Refreshing sources is not enough: the snapshot every visitor reads is only
 // written by buildDashboard, so without this the dashboard stays frozen at the
 // last forced refresh while the source rows keep moving underneath it.
-// Rebuilds are single-flighted because the realtime and standard timers line up
-// every few hours and would otherwise duplicate the work.
-function rebuildDashboardSnapshot(reason) {
-  if (snapshotRebuild) {
+//
+// Every path that rebuilds goes through here, including manual refreshes, so
+// overlapping requests collapse instead of each writing its own collection --
+// two collections seconds apart leave every delta reading zero and make the
+// baseline "10 seconds ago" instead of the collection interval.
+//
+// A caller only joins the in-flight rebuild when that rebuild already forces
+// every source the caller asked for. Otherwise it waits and runs its own:
+// joining a weaker rebuild would silently drop an explicit refresh request.
+function rebuildDashboardSnapshot(reason, forceIds = []) {
+  const covered =
+    snapshotRebuild &&
+    forceIds.every((id) => snapshotRebuildForced && snapshotRebuildForced.has(id));
+
+  if (covered) {
     return snapshotRebuild;
   }
 
-  snapshotRebuild = buildDashboard()
-    .then((payload) => {
+  const previous = snapshotRebuild;
+  const forcedSet = new Set(forceIds);
+
+  const run = (async () => {
+    if (previous) {
+      await previous;
+    }
+
+    try {
+      const payload = await buildDashboard(forceIds);
       console.log(`[scheduler] dashboard snapshot rebuilt (${reason})`);
       return payload;
-    })
-    .catch((error) => {
+    } catch (error) {
+      // Swallow rather than reject: the scheduler call sites are fire-and-forget
+      // and an unhandled rejection would take the process down. Callers that
+      // need the payload check for null.
       console.error(`[scheduler] snapshot rebuild failed (${reason}):`, error);
       return null;
-    })
-    .finally(() => {
-      snapshotRebuild = null;
-    });
+    } finally {
+      if (snapshotRebuild === run) {
+        snapshotRebuild = null;
+        snapshotRebuildForced = null;
+      }
+    }
+  })();
 
-  return snapshotRebuild;
+  snapshotRebuild = run;
+  snapshotRebuildForced = forcedSet;
+
+  return run;
 }
 
 function startSourceSchedulers() {
@@ -2083,7 +2137,18 @@ const server = http.createServer(async (request, response) => {
       }
     }
 
-    const payload = await buildDashboard(forceIds);
+    // Through the single-flight so a manual refresh coalesces with a scheduled
+    // rebuild instead of writing a second collection seconds apart.
+    const payload = await rebuildDashboardSnapshot(
+      forceIds.length ? `manual:${refreshParam}` : "on-demand",
+      forceIds
+    );
+
+    if (!payload) {
+      jsonResponse(response, 503, { error: "Dashboard rebuild failed" });
+      return;
+    }
+
     jsonResponse(response, 200, payload);
     return;
   }
