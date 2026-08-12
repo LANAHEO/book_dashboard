@@ -21,10 +21,17 @@ Notes about the `free` plan:
 
 - The service spins down after 15 minutes without traffic and takes about a
   minute to wake up.
-- The ranking cache in `.cache/rankings` does not survive a restart, so the
-  first request after waking re-collects every list (roughly 20–45 seconds).
+- Prefer Supabase snapshots for cold starts: set `SUPABASE_URL` and
+  `SUPABASE_SERVICE_ROLE_KEY`, then run `supabase/schema.sql`. Without those
+  keys the app falls back to `.cache/rankings`, which does not survive a
+  restart.
 - Keep the `Dockerfile`. Removing it breaks the Render build even though
   `render.yaml` says `runtime: node`.
+
+Collect intervals (aligned to bookstore update cadence):
+
+- Realtime lists: every 60 minutes
+- Daily / weekly / monthly lists: every 6 hours
 
 ## Railway
 

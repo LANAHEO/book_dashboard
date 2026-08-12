@@ -5,13 +5,47 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const { URL } = require("node:url");
 
+async function loadEnvFile() {
+  try {
+    const raw = await fs.readFile(path.join(__dirname, ".env"), "utf8");
+    for (const line of raw.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) {
+        continue;
+      }
+
+      const index = trimmed.indexOf("=");
+      if (index <= 0) {
+        continue;
+      }
+
+      const key = trimmed.slice(0, index).trim();
+      let value = trimmed.slice(index + 1).trim();
+      if (
+        (value.startsWith('"') && value.endsWith('"')) ||
+        (value.startsWith("'") && value.endsWith("'"))
+      ) {
+        value = value.slice(1, -1);
+      }
+
+      if (process.env[key] === undefined) {
+        process.env[key] = value;
+      }
+    }
+  } catch (error) {
+    // .env is optional until Supabase keys are configured.
+  }
+}
+
 const HOST = process.env.HOST || "0.0.0.0";
 const PORT = Number(process.env.PORT || 3000);
 const PUBLIC_DIR = path.join(__dirname, "public");
 const SOURCE_CACHE_DIR = path.join(__dirname, ".cache", "rankings");
+const DASHBOARD_SNAPSHOT_ID = "latest";
 
-const FIVE_MINUTES = 5 * 60 * 1000;
-const TEN_MINUTES = 10 * 60 * 1000;
+// 서점 실시간은 약 1시간, 일·주간은 더 느리게 바뀌므로 수집 주기를 맞춤.
+const REALTIME_REFRESH_MS = 60 * 60 * 1000;
+const STANDARD_REFRESH_MS = 6 * 60 * 60 * 1000;
 const REQUEST_TIMEOUT_MS = 15_000;
 
 const USER_AGENT =
@@ -124,7 +158,7 @@ function makeCategorySource(options) {
     period,
     group: "category",
     realtime,
-    ttlMs: realtime ? FIVE_MINUTES : TEN_MINUTES,
+    ttlMs: realtime ? REALTIME_REFRESH_MS : STANDARD_REFRESH_MS,
     paginate: options.paginate !== false,
     derived: options.derived === true,
     note: options.note || "",
@@ -208,7 +242,7 @@ const SOURCES = [
     period: "weekly",
     group: "standard",
     realtime: false,
-    ttlMs: TEN_MINUTES,
+    ttlMs: STANDARD_REFRESH_MS,
     sourceUrl: "https://store.kyobobook.co.kr/bestseller/total/weekly",
     load: () =>
       fetchKyoboList("total", {
@@ -226,7 +260,7 @@ const SOURCES = [
     period: "daily",
     group: "standard",
     realtime: false,
-    ttlMs: TEN_MINUTES,
+    ttlMs: STANDARD_REFRESH_MS,
     sourceUrl: "https://store.kyobobook.co.kr/bestseller/online/daily",
     load: () =>
       fetchKyoboList("online", {
@@ -246,7 +280,7 @@ const SOURCES = [
     period: "weekly",
     group: "standard",
     realtime: false,
-    ttlMs: TEN_MINUTES,
+    ttlMs: STANDARD_REFRESH_MS,
     sourceUrl: "https://store.kyobobook.co.kr/bestseller/online/weekly",
     load: () =>
       fetchKyoboList("online", {
@@ -266,7 +300,7 @@ const SOURCES = [
     period: "monthly",
     group: "standard",
     realtime: false,
-    ttlMs: TEN_MINUTES,
+    ttlMs: STANDARD_REFRESH_MS,
     sourceUrl: "https://store.kyobobook.co.kr/bestseller/online/monthly",
     load: () =>
       fetchKyoboList("online", {
@@ -285,7 +319,7 @@ const SOURCES = [
     typeLabel: "TOP 100",
     group: "overall-realtime",
     realtime: true,
-    ttlMs: FIVE_MINUTES,
+    ttlMs: REALTIME_REFRESH_MS,
     sourceUrl: "https://store.kyobobook.co.kr/bestseller/realtime",
     load: () => fetchKyoboRealtimeList()
   },
@@ -297,7 +331,7 @@ const SOURCES = [
     typeLabel: "TOP 100",
     group: "overall-realtime",
     realtime: true,
-    ttlMs: FIVE_MINUTES,
+    ttlMs: REALTIME_REFRESH_MS,
     sourceUrl: makeYes24Url("realtime", "001"),
     load: () => fetchYes24List(makeYes24Url("realtime", "001"), { limit: RANK_LIMIT })
   },
@@ -309,7 +343,7 @@ const SOURCES = [
     period: "weekly",
     group: "standard",
     realtime: false,
-    ttlMs: TEN_MINUTES,
+    ttlMs: STANDARD_REFRESH_MS,
     sourceUrl: makeYes24Url("weekly", "001"),
     load: () =>
       fetchYes24List(makeYes24Url("weekly", "001"), {
@@ -325,7 +359,7 @@ const SOURCES = [
     period: "daily",
     group: "standard",
     realtime: false,
-    ttlMs: TEN_MINUTES,
+    ttlMs: STANDARD_REFRESH_MS,
     sourceUrl: makeYes24Url("daily", "001"),
     load: () =>
       fetchYes24List(makeYes24Url("daily", "001"), {
@@ -341,7 +375,7 @@ const SOURCES = [
     typeLabel: "TOP 100",
     group: "overall-realtime",
     realtime: true,
-    ttlMs: FIVE_MINUTES,
+    ttlMs: REALTIME_REFRESH_MS,
     sourceUrl: makeAladinUrl("realtime"),
     load: () =>
       fetchAladinList(makeAladinUrl("realtime"), {
@@ -357,7 +391,7 @@ const SOURCES = [
     period: "daily",
     group: "standard",
     realtime: false,
-    ttlMs: TEN_MINUTES,
+    ttlMs: STANDARD_REFRESH_MS,
     sourceUrl: makeAladinUrl("daily"),
     load: () =>
       fetchAladinList(makeAladinUrl("daily"), {
@@ -373,7 +407,7 @@ const SOURCES = [
     period: "weekly",
     group: "standard",
     realtime: false,
-    ttlMs: TEN_MINUTES,
+    ttlMs: STANDARD_REFRESH_MS,
     sourceUrl: makeAladinUrl("weekly"),
     load: () =>
       fetchAladinList(makeAladinUrl("weekly"), {
@@ -390,6 +424,198 @@ function getSourceCachePath(id) {
   return path.join(SOURCE_CACHE_DIR, `${id}.json`);
 }
 
+function getSupabaseConfig() {
+  const url = String(process.env.SUPABASE_URL || "").replace(/\/$/, "");
+  const key = String(process.env.SUPABASE_SERVICE_ROLE_KEY || "");
+  if (!url || !key) {
+    return null;
+  }
+
+  return { url, key };
+}
+
+async function supabaseRequest(pathname, options = {}) {
+  const config = getSupabaseConfig();
+  if (!config) {
+    return null;
+  }
+
+  const response = await fetch(`${config.url}/rest/v1/${pathname}`, {
+    ...options,
+    headers: {
+      apikey: config.key,
+      Authorization: `Bearer ${config.key}`,
+      "content-type": "application/json",
+      ...(options.headers || {})
+    }
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`Supabase ${response.status}: ${body.slice(0, 200)}`);
+  }
+
+  if (response.status === 204) {
+    return null;
+  }
+
+  const text = await response.text();
+  return text ? JSON.parse(text) : null;
+}
+
+const SUPABASE_PROBE_TTL_MS = 30000;
+let supabaseProbe = null;
+
+// getSupabaseConfig only tells us the keys are present. This asks Supabase
+// whether they actually work, so /api/health cannot report a dead link as ready.
+async function probeSupabase() {
+  if (!getSupabaseConfig()) {
+    return { reachable: false, error: "not configured" };
+  }
+
+  if (supabaseProbe && Date.now() - supabaseProbe.at < SUPABASE_PROBE_TTL_MS) {
+    return supabaseProbe.result;
+  }
+
+  let result;
+  try {
+    await supabaseRequest("dashboard_snapshots?select=id&limit=1");
+    result = { reachable: true, error: null };
+  } catch (error) {
+    const message = String(error.message || error);
+    result = {
+      reachable: false,
+      error: message.includes("PGRST205")
+        ? "table missing — run supabase/schema.sql"
+        : message.slice(0, 120)
+    };
+  }
+
+  supabaseProbe = { at: Date.now(), result };
+  return result;
+}
+
+async function writeSupabaseSource(id, payload, expiresAt) {
+  if (!getSupabaseConfig()) {
+    return false;
+  }
+
+  await supabaseRequest("source_snapshots?on_conflict=id", {
+    method: "POST",
+    headers: {
+      Prefer: "resolution=merge-duplicates,return=minimal"
+    },
+    body: JSON.stringify({
+      id,
+      payload,
+      expires_at: new Date(expiresAt).toISOString(),
+      updated_at: new Date().toISOString()
+    })
+  });
+
+  return true;
+}
+
+async function readSupabaseSource(id) {
+  if (!getSupabaseConfig()) {
+    return null;
+  }
+
+  const rows = await supabaseRequest(
+    `source_snapshots?id=eq.${encodeURIComponent(id)}&select=payload,expires_at&limit=1`
+  );
+
+  if (!Array.isArray(rows) || !rows[0] || !rows[0].payload) {
+    return null;
+  }
+
+  return {
+    payload: rows[0].payload,
+    expiresAt: rows[0].expires_at ? Date.parse(rows[0].expires_at) : 0
+  };
+}
+
+async function writeDashboardSnapshot(payload) {
+  try {
+    await fs.mkdir(SOURCE_CACHE_DIR, { recursive: true });
+    await fs.writeFile(
+      path.join(SOURCE_CACHE_DIR, "dashboard-latest.json"),
+      JSON.stringify({
+        payload,
+        updatedAt: new Date().toISOString()
+      }),
+      "utf8"
+    );
+  } catch (error) {
+    console.error("[cache] failed to persist dashboard snapshot:", error);
+  }
+
+  if (!getSupabaseConfig()) {
+    return false;
+  }
+
+  await supabaseRequest("dashboard_snapshots?on_conflict=id", {
+    method: "POST",
+    headers: {
+      Prefer: "resolution=merge-duplicates,return=minimal"
+    },
+    body: JSON.stringify({
+      id: DASHBOARD_SNAPSHOT_ID,
+      payload,
+      updated_at: new Date().toISOString()
+    })
+  });
+
+  return true;
+}
+
+async function readLocalDashboardSnapshot() {
+  try {
+    const raw = await fs.readFile(
+      path.join(SOURCE_CACHE_DIR, "dashboard-latest.json"),
+      "utf8"
+    );
+    const parsed = JSON.parse(raw);
+    if (!parsed || !parsed.payload || !Array.isArray(parsed.payload.sections)) {
+      return null;
+    }
+
+    return {
+      payload: parsed.payload,
+      updatedAt: parsed.updatedAt || parsed.payload.generatedAt || ""
+    };
+  } catch (error) {
+    return null;
+  }
+}
+
+async function readDashboardSnapshot() {
+  if (getSupabaseConfig()) {
+    try {
+      const rows = await supabaseRequest(
+        `dashboard_snapshots?id=eq.${encodeURIComponent(DASHBOARD_SNAPSHOT_ID)}&select=payload,updated_at&limit=1`
+      );
+
+      if (Array.isArray(rows) && rows[0] && rows[0].payload) {
+        return {
+          payload: rows[0].payload,
+          updatedAt: rows[0].updated_at || "",
+          source: "supabase"
+        };
+      }
+    } catch (error) {
+      console.error("[supabase] dashboard read failed:", error);
+    }
+  }
+
+  const local = await readLocalDashboardSnapshot();
+  if (!local) {
+    return null;
+  }
+
+  return { ...local, source: "file" };
+}
+
 async function writePersistedSource(id, payload, expiresAt) {
   try {
     await fs.mkdir(SOURCE_CACHE_DIR, { recursive: true });
@@ -401,9 +627,24 @@ async function writePersistedSource(id, payload, expiresAt) {
   } catch (error) {
     console.error(`[cache] failed to persist ${id}:`, error);
   }
+
+  try {
+    await writeSupabaseSource(id, payload, expiresAt);
+  } catch (error) {
+    console.error(`[supabase] failed to persist ${id}:`, error);
+  }
 }
 
 async function readPersistedSource(id) {
+  try {
+    const fromSupabase = await readSupabaseSource(id);
+    if (fromSupabase && fromSupabase.payload && Array.isArray(fromSupabase.payload.items)) {
+      return fromSupabase;
+    }
+  } catch (error) {
+    console.error(`[supabase] failed to read ${id}:`, error);
+  }
+
   try {
     const raw = await fs.readFile(getSourceCachePath(id), "utf8");
     const parsed = JSON.parse(raw);
@@ -1354,12 +1595,20 @@ async function buildDashboard(forceIds = []) {
     lists: lists.filter((list) => list.storeId === store.id)
   }));
 
-  return {
+  const payload = {
     generatedAt: new Date().toISOString(),
     assetVersion: await getAssetVersion(),
     sections,
     focusBooks: buildFocusBooks(sections, catalog)
   };
+
+  try {
+    await writeDashboardSnapshot(payload);
+  } catch (error) {
+    console.error("[supabase] failed to persist dashboard snapshot:", error);
+  }
+
+  return payload;
 }
 
 function getForcedSourceIds(refreshParam) {
@@ -1496,13 +1745,13 @@ function startSourceSchedulers() {
     refreshRealtimeSources().catch((error) => {
       console.error("[scheduler] realtime refresh failed:", error);
     });
-  }, FIVE_MINUTES);
+  }, REALTIME_REFRESH_MS);
 
   setInterval(() => {
     refreshStandardSources().catch((error) => {
       console.error("[scheduler] standard refresh failed:", error);
     });
-  }, TEN_MINUTES);
+  }, STANDARD_REFRESH_MS);
 }
 
 const server = http.createServer(async (request, response) => {
@@ -1521,6 +1770,23 @@ const server = http.createServer(async (request, response) => {
   if (url.pathname === "/api/dashboard") {
     const refreshParam = url.searchParams.get("refresh");
     const forceIds = getForcedSourceIds(refreshParam);
+
+    if (!forceIds.length) {
+      try {
+        const snapshot = await readDashboardSnapshot();
+        if (snapshot && snapshot.payload && Array.isArray(snapshot.payload.sections)) {
+          jsonResponse(response, 200, {
+            ...snapshot.payload,
+            cacheState: snapshot.source || "snapshot",
+            snapshotUpdatedAt: snapshot.updatedAt
+          });
+          return;
+        }
+      } catch (error) {
+        console.error("[storage] dashboard read failed:", error);
+      }
+    }
+
     const payload = await buildDashboard(forceIds);
     jsonResponse(response, 200, payload);
     return;
@@ -1541,15 +1807,50 @@ const server = http.createServer(async (request, response) => {
   }
 
   if (url.pathname === "/api/health") {
-    jsonResponse(response, 200, { ok: true, now: new Date().toISOString() });
+    const supabaseConfigured = Boolean(getSupabaseConfig());
+    const probe = await probeSupabase();
+    let snapshot = null;
+    try {
+      snapshot = await readDashboardSnapshot();
+    } catch (error) {
+      snapshot = null;
+    }
+
+    jsonResponse(response, 200, {
+      ok: true,
+      now: new Date().toISOString(),
+      storage: {
+        supabase: supabaseConfigured && probe.reachable,
+        supabaseConfigured,
+        supabaseError: probe.error,
+        snapshotSource: snapshot ? snapshot.source : null,
+        snapshotUpdatedAt: snapshot ? snapshot.updatedAt : null,
+        hasDashboardSnapshot: Boolean(snapshot)
+      },
+      scheduler: {
+        realtimeMinutes: REALTIME_REFRESH_MS / 60000,
+        standardHours: STANDARD_REFRESH_MS / 3600000
+      }
+    });
     return;
   }
 
   await serveStatic(response, url.pathname);
 });
 
-startSourceSchedulers();
+loadEnvFile().then(async () => {
+  startSourceSchedulers();
 
-server.listen(PORT, HOST, () => {
-  console.log(`Book ranking dashboard ready at http://${HOST}:${PORT}`);
+  const probe = await probeSupabase();
+  const storageLabel = probe.reachable
+    ? "enabled"
+    : `disabled (file cache only: ${probe.error})`;
+
+  server.listen(PORT, HOST, () => {
+    console.log(`Book ranking dashboard ready at http://${HOST}:${PORT}`);
+    console.log(`[storage] supabase=${storageLabel}`);
+    console.log(
+      `[scheduler] realtime=${REALTIME_REFRESH_MS / 60000}m standard=${STANDARD_REFRESH_MS / 3600000}h`
+    );
+  });
 });
