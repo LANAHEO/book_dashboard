@@ -467,7 +467,9 @@ function renderDroppedOut(book) {
   return dropped
     .slice(0, 4)
     .map((item) => {
-      const label = `${item.storeName} · ${item.listName} · ${item.previousRank}위 → 이탈`;
+      // "이탈"을 앞에 둔다. 칩은 좁은 화면에서 말줄임되므로 뒤에 두면 하필
+      // 뜻을 지닌 단어가 잘려 "88위 → 이..." 로 남는다.
+      const label = `이탈 · ${item.storeName} · ${item.listName} · 직전 ${item.previousRank}위`;
 
       return `<span class="focus-chip is-dropped" title="${escapeHtml(label)}">${escapeHtml(label)}</span>`;
     })
