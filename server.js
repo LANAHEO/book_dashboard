@@ -1823,26 +1823,58 @@ async function refreshStandardSources() {
   );
 }
 
+let snapshotRebuild = null;
+
+// Refreshing sources is not enough: the snapshot every visitor reads is only
+// written by buildDashboard, so without this the dashboard stays frozen at the
+// last forced refresh while the source rows keep moving underneath it.
+// Rebuilds are single-flighted because the realtime and standard timers line up
+// every few hours and would otherwise duplicate the work.
+function rebuildDashboardSnapshot(reason) {
+  if (snapshotRebuild) {
+    return snapshotRebuild;
+  }
+
+  snapshotRebuild = buildDashboard()
+    .then((payload) => {
+      console.log(`[scheduler] dashboard snapshot rebuilt (${reason})`);
+      return payload;
+    })
+    .catch((error) => {
+      console.error(`[scheduler] snapshot rebuild failed (${reason}):`, error);
+      return null;
+    })
+    .finally(() => {
+      snapshotRebuild = null;
+    });
+
+  return snapshotRebuild;
+}
+
 function startSourceSchedulers() {
+  // Rebuild once both passes are done so the first snapshot carries realtime
+  // and standard lists together.
   setTimeout(() => {
-    refreshRealtimeSources().catch((error) => {
-      console.error("[scheduler] initial realtime refresh failed:", error);
-    });
-    refreshStandardSources().catch((error) => {
-      console.error("[scheduler] initial standard refresh failed:", error);
-    });
+    Promise.allSettled([refreshRealtimeSources(), refreshStandardSources()]).then(() =>
+      rebuildDashboardSnapshot("startup")
+    );
   }, 1000);
 
   setInterval(() => {
-    refreshRealtimeSources().catch((error) => {
-      console.error("[scheduler] realtime refresh failed:", error);
-    });
+    refreshRealtimeSources()
+      .catch((error) => {
+        console.error("[scheduler] realtime refresh failed:", error);
+      })
+      // Rebuild even when some sources failed -- partial data beats a stale snapshot.
+      .then(() => rebuildDashboardSnapshot("realtime"));
   }, REALTIME_REFRESH_MS);
 
   setInterval(() => {
-    refreshStandardSources().catch((error) => {
-      console.error("[scheduler] standard refresh failed:", error);
-    });
+    refreshStandardSources()
+      .catch((error) => {
+        console.error("[scheduler] standard refresh failed:", error);
+      })
+      .then(() => rebuildDashboardSnapshot("standard"));
   }, STANDARD_REFRESH_MS);
 }
 
