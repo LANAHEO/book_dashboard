@@ -481,7 +481,15 @@ function formatPublishedDate(value) {
     return "출간일 확인 중";
   }
 
-  return `출간 ${String(value).replaceAll("-", ".")}`;
+  const text = String(value);
+
+  // 출처가 "2026년 8월"까지만 준 경우는 YYYY-MM으로 온다. 없는 일자를
+  // 만들어 붙이지 않고 월까지만 보여 준다.
+  if (/^\d{4}-\d{2}$/.test(text)) {
+    return `출간 ${text.replace("-", ".")}`;
+  }
+
+  return `출간 ${text.replaceAll("-", ".")}`;
 }
 
 function renderFocusBoardV2() {

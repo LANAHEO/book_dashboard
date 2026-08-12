@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node -e ' *)",
+      "Bash(node --check server.js)",
+      "Bash(node --check public/app.js)",
+      "Bash(node __TRACKED_VAR__/date-test.js server.js)"
+    ]
+  }
+}

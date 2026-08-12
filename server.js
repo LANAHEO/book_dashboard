@@ -1398,7 +1398,9 @@ function mapYes24Block(block) {
     meta: makeMeta([author, publisher, publishedAt]),
     secondary: salePrice ? `${formatNumber(salePrice)}원` : "",
     publisher,
-    publishedAt: normalizePublishedAt(publishedAt),
+    // 예스24 목록은 "2025년 10월"처럼 월까지만 주는 경우가 있다. 없는 일자를
+    // 1일로 채우면 교보가 준 실제 일자를 덮어쓸 수 있다.
+    publishedAt: normalizePublishedAtLoose(publishedAt),
     link,
     image: normalizeUrl(
       extract(block, /<img[^>]+data-original="([^"]+)"/) ||
@@ -1489,7 +1491,8 @@ function mapAladinBlock(block) {
       salesPoint ? `세일즈포인트 ${salesPoint}` : ""
     ]),
     publisher,
-    publishedAt: normalizePublishedAt(stripTags(authorLine)),
+    // 알라딘 목록도 월까지만 주는 경우가 있다 — 위 예스24와 같은 이유.
+    publishedAt: normalizePublishedAtLoose(stripTags(authorLine)),
     link: normalizeUrl(
       extract(block, /<a href="([^"]+)" class="bo3">/),
       "https://www.aladin.co.kr"
@@ -1529,6 +1532,100 @@ async function fetchAladinList(url, options = {}) {
   };
 }
 
+// 알라딘 출판사 검색 결과는 "2026년 8월"까지만 준다. normalizePublishedAt은
+// 없는 일자를 1일로 채우므로, 그대로 쓰면 "2026.08.01" 같은 없는 날짜를 만든다.
+// 월까지만 아는 경우는 YYYY-MM으로 남겨 정밀도를 속이지 않는다.
+function normalizePublishedAtLoose(value) {
+  const text = String(value || "").trim();
+
+  if (!text) {
+    return "";
+  }
+
+  const hasDay = /(\d{4})\s*(?:[.\-/]|년)\s*(\d{1,2})\s*(?:[.\-/]|월)\s*(\d{1,2})/.test(text) ||
+    /\b\d{8}\b/.test(text);
+
+  if (hasDay) {
+    return normalizePublishedAt(text);
+  }
+
+  const monthOnly = text.match(/(\d{4})\s*(?:[.\-/]|년)\s*(\d{1,2})/);
+  if (!monthOnly) {
+    return "";
+  }
+
+  const month = Number(monthOnly[2]);
+  if (month < 1 || month > 12) {
+    return "";
+  }
+
+  return `${monthOnly[1]}-${String(month).padStart(2, "0")}`;
+}
+
+function hasFullDate(value) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(String(value || ""));
+}
+
+// 상품 페이지에는 schema.org datePublished가 있어 정확한 일자를 준다.
+async function fetchAladinPublishedAt(link) {
+  const itemId = extractStoreItemId("aladin", link);
+
+  if (!itemId) {
+    return "";
+  }
+
+  const html = await fetchText(
+    `https://www.aladin.co.kr/shop/wproduct.aspx?ItemId=${itemId}`,
+    { accept: "text/html,application/xhtml+xml" }
+  );
+
+  return normalizePublishedAt(extract(html, /datePublished"?\s*content="([^"]+)"/i));
+}
+
+// 순위권 밖 도서는 교보 베스트셀러 API에 없으므로 상품 링크를 검색으로 찾는다.
+// 검색 결과에는 pid와 제목이 붙어 있어(data-kbbfn-*) 동명 도서·다른 판본을
+// 집지 않도록 제목을 대조할 수 있다.
+async function fetchKyoboProductLink(title) {
+  const key = normalizeTitleKey(title);
+
+  if (!key) {
+    return "";
+  }
+
+  const html = await fetchText(
+    `https://search.kyobobook.co.kr/search?keyword=${encodeURIComponent(title)}&target=total`,
+    { accept: "text/html,application/xhtml+xml" }
+  );
+
+  const pattern = /data-kbbfn-pid="([^"]+)"[^>]*(?:[^>]*>)?[\s\S]{0,400}?data-kbbfn-title="([^"]+)"/g;
+  let match;
+
+  while ((match = pattern.exec(html))) {
+    const candidate = normalizeTitleKey(match[2]);
+
+    if (candidate && (candidate === key || candidate.includes(key) || key.includes(candidate))) {
+      return `https://product.kyobobook.co.kr/detail/${match[1]}`;
+    }
+  }
+
+  return "";
+}
+
+// 카탈로그 한 권을 정확한 출간일 + 교보 링크로 채운다. 개별 실패는 삼킨다 —
+// 보강이 안 되면 검색 페이지에서 얻은 월 단위 값으로 남는다.
+async function enrichCatalogBook(book) {
+  const [published, kyoboLink] = await Promise.all([
+    fetchAladinPublishedAt(book.link).catch(() => ""),
+    fetchKyoboProductLink(book.title).catch(() => "")
+  ]);
+
+  return {
+    ...book,
+    publishedAt: hasFullDate(published) ? published : book.publishedAt,
+    kyoboLink: kyoboLink || book.kyoboLink || ""
+  };
+}
+
 function makePublisherCatalogUrl() {
   const url = new URL("https://www.aladin.co.kr/search/wsearchresult.aspx");
   url.searchParams.set("SearchTarget", "Book");
@@ -1551,11 +1648,12 @@ function mapPublisherCatalogBlock(block) {
 
   return {
     title,
-    publishedAt: normalizePublishedAt(stripTags(publisherLine[2])),
+    publishedAt: normalizePublishedAtLoose(stripTags(publisherLine[2])),
     link: normalizeUrl(
       extract(block, /<a href="([^"]*wproduct\.aspx\?ItemId=\d+)"/),
       "https://www.aladin.co.kr"
-    )
+    ),
+    kyoboLink: ""
   };
 }
 
@@ -1583,9 +1681,13 @@ async function fetchPublisherCatalog() {
     throw new Error(`${WATCH_PUBLISHER_NAME} 도서 목록을 찾지 못했습니다.`);
   }
 
-  return books
+  const shortlist = books
     .sort((a, b) => String(b.publishedAt).localeCompare(String(a.publishedAt)))
     .slice(0, FOCUS_CATALOG_LIMIT);
+
+  // 보강은 6시간 TTL 뒤에서만 돌고, fetchText가 호스트당 4개로 조절하므로
+  // 한 번에 몰아 보내도 서점에 부담이 되지 않는다.
+  return Promise.all(shortlist.map((book) => enrichCatalogBook(book)));
 }
 
 let publisherCatalogCache = null;
@@ -1665,6 +1767,7 @@ function buildFocusBooks(sections, catalog = []) {
         title: book.title,
         publishedAt: book.publishedAt || "",
         link: book.link || "",
+        kyoboLink: book.kyoboLink || "",
         appearances: []
       }
     ])
@@ -1684,6 +1787,7 @@ function buildFocusBooks(sections, catalog = []) {
               title: item.title,
               publishedAt: "",
               link: "",
+              kyoboLink: "",
               appearances: []
             });
           }
@@ -1725,11 +1829,15 @@ function buildFocusBooks(sections, catalog = []) {
       const bestRank = rankBasis.length
         ? Math.min(...rankBasis.map((item) => item.rank).filter(Boolean))
         : null;
-      const latestPublishedAt =
-        [book.publishedAt, ...appearances.map((item) => item.publishedAt)]
-          .filter(Boolean)
-          .sort()
-          .at(-1) || "";
+      // 서점 값 중 최댓값을 쓰면 재쇄·개정판 날짜가 초판을 덮는다. 출판사
+      // 카탈로그에서 정확한 일자를 얻었으면 그게 이 책의 출간일이다.
+      // 없을 때만 서점이 준 일자 중 가장 이른 것을 쓴다 — 늦은 값은
+      // 재쇄일 가능성이 높다. 월까지만 아는 값은 마지막 수단으로 남긴다.
+      const storeDates = appearances.map((item) => item.publishedAt).filter(Boolean);
+      const storeFullDates = storeDates.filter(hasFullDate).sort();
+      const latestPublishedAt = hasFullDate(book.publishedAt)
+        ? book.publishedAt
+        : storeFullDates[0] || [book.publishedAt, ...storeDates].filter(Boolean).sort()[0] || "";
 
       appearances.sort((a, b) => {
         if (a.realtime !== b.realtime) {
@@ -1742,7 +1850,14 @@ function buildFocusBooks(sections, catalog = []) {
       return {
         bookKey,
         title: book.title,
-        link: book.link || appearances.find((item) => item.link)?.link || "",
+        // 제목 클릭은 교보 상품 페이지로 보낸다. 카탈로그 보강에서 찾은 링크가
+        // 1순위, 없으면 교보 순위에서 얻은 링크, 그다음이 다른 서점이다.
+        link:
+          book.kyoboLink ||
+          appearances.find((item) => item.storeId === "kyobo" && item.link)?.link ||
+          book.link ||
+          appearances.find((item) => item.link)?.link ||
+          "",
         bestRank,
         latestPublishedAt,
         appearanceCount: appearances.length,
