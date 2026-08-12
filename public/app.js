@@ -26,7 +26,19 @@ const elements = {
   autoRefreshText: document.getElementById("auto-refresh-text")
 };
 
-const BADGE_IDLE_TEXT = "자동 갱신 · 실시간 5분 / 일반 10분";
+const BADGE_IDLE_FALLBACK = "자동 갱신 준비 중";
+
+// 주기를 여기에 적어 두면 서버 설정을 바꿀 때 같이 안 고쳐진다. 실제로 그래서
+// "실시간 5분 / 일반 10분"이라고 표시하면서 60분마다 수집하고 있었다.
+function badgeIdleText() {
+  const intervals = state.dashboard && state.dashboard.collectIntervals;
+
+  if (!intervals) {
+    return BADGE_IDLE_FALLBACK;
+  }
+
+  return `자동 갱신 · 실시간 ${intervals.realtimeMinutes}분 / 일반 ${intervals.standardHours}시간`;
+}
 const BADGE_UPDATE_FLASH_MS = 3200;
 const WATCH_PUBLISHER_NAME = "상상스퀘어";
 const WATCH_PUBLISHER_KEY = WATCH_PUBLISHER_NAME.replace(/\s+/g, "").toLowerCase();
@@ -83,7 +95,7 @@ function clearBadgeResetTimer() {
 
 function showIdleBadge() {
   clearBadgeResetTimer();
-  setAutoRefreshBadge(BADGE_IDLE_TEXT, "idle");
+  setAutoRefreshBadge(badgeIdleText(), "idle");
 }
 
 function showUpdatedBadge() {
@@ -289,6 +301,7 @@ function renderCard(list) {
           <div class="panel-meta">
             <span>${escapeHtml(typeLabel)}</span>
             <span>${escapeHtml(countLabel)}</span>
+            ${renderSourceBasis(list)}
           </div>
         </div>
       </div>
@@ -474,6 +487,26 @@ function renderDroppedOut(book) {
       return `<span class="focus-chip is-dropped" title="${escapeHtml(label)}">${escapeHtml(label)}</span>`;
     })
     .join("");
+}
+
+// 서점이 밝히는 집계 기준. 우리가 수집한 시각과 다르므로 따로 보여 준다 —
+// 실시간 목록도 서점 쪽 기준이 한 시간 전일 수 있다.
+function renderSourceBasis(list) {
+  const stamp = list.sourceStamp || "";
+  const cadence = list.cadence || "";
+
+  // 알라딘은 어느 페이지에도 집계 기준을 적지 않는다. 비워 두면 위의 "마지막 수집"
+  // 시각이 순위 기준으로 읽히므로, 밝히지 않았다는 사실을 그대로 적는다.
+  if (!stamp && !cadence) {
+    return `<span class="panel-basis is-unknown" title="이 서점은 순위 집계 기준을 페이지에 표기하지 않습니다">서점 기준 미표기</span>`;
+  }
+
+  const label = stamp ? `서점 기준 ${stamp}` : `서점 기준 · ${cadence}`;
+  const title = [stamp ? `서점이 밝힌 집계 기준: ${stamp}` : "", cadence]
+    .filter(Boolean)
+    .join(" · ");
+
+  return `<span class="panel-basis" title="${escapeHtml(title)}">${escapeHtml(label)}</span>`;
 }
 
 function formatPublishedDate(value) {

@@ -69,6 +69,35 @@ const PERIOD_LABELS = {
   weekly: "주간",
   monthly: "월간"
 };
+// 서점이 순위를 실제로 어떤 기준으로 집계하는지. 우리 수집 주기와 다른 값이며,
+// 이걸 보여 주지 않으면 "최근 업데이트 12:29"가 순위가 12:29 기준이라는 뜻으로
+// 읽힌다. 교보는 API 스탬프(실시간 12:00 정각, 일간 전일, 주간 수~화, 월간 전월)로,
+// 예스24는 페이지 문구로 확인했다. 알라딘은 어느 페이지에도 기준을 적지 않는다.
+const STORE_CADENCE = {
+  kyobo: {
+    realtime: "매시 정각 기준",
+    daily: "전일 판매 집계",
+    weekly: "수~화 1주 집계",
+    monthly: "전월 집계"
+  },
+  yes24: {
+    realtime: "1시간 단위 업데이트",
+    daily: "전일 판매 집계",
+    weekly: "최근 7일 · 매일 1회 집계"
+  },
+  aladin: {}
+};
+
+function getStoreCadence(storeId, period, realtime) {
+  const table = STORE_CADENCE[storeId];
+
+  if (!table) {
+    return "";
+  }
+
+  return table[period || (realtime ? "realtime" : "")] || "";
+}
+
 const YES24_PERIOD_PATHS = {
   realtime: "realtimebestseller",
   daily: "daybestseller",
@@ -1426,8 +1455,35 @@ async function fetchYes24List(url, options = {}) {
 
   return {
     items: dedupeByRank(blocks.map(mapYes24Block).filter(Boolean)).slice(0, limit),
-    sourceStamp: ""
+    sourceStamp: parseYes24Stamp(htmlPages[0])
   };
+}
+
+// 예스24는 순위 기준을 페이지에 직접 적는다. 실시간은 "2026.08.12 11:00 기준",
+// 주간(종합)은 "2026.08.05 ~ 2026.08.11 기준". 그대로 가져와야 우리 수집 시각과
+// 서점의 집계 기준을 구분해 보여 줄 수 있다.
+function parseYes24Stamp(html) {
+  if (!html) {
+    return "";
+  }
+
+  const text = stripTags(html);
+
+  const range = text.match(
+    /(20\d{2}\s*[.\-/]\s*\d{1,2}\s*[.\-/]\s*\d{1,2})\s*~\s*(20\d{2}\s*[.\-/]\s*\d{1,2}\s*[.\-/]\s*\d{1,2})\s*기준/
+  );
+  if (range) {
+    return `${range[1].replace(/\s+/g, "")} ~ ${range[2].replace(/\s+/g, "")}`;
+  }
+
+  const stamp = text.match(
+    /(20\d{2}\s*[.\-/]\s*\d{1,2}\s*[.\-/]\s*\d{1,2})\s*(\d{1,2}:\d{2})?\s*기준/
+  );
+  if (stamp) {
+    return [stamp[1].replace(/\s+/g, ""), stamp[2] || ""].filter(Boolean).join(" ");
+  }
+
+  return "";
 }
 
 function parseAladinPublisher(authorLine) {
@@ -1746,6 +1802,7 @@ function buildPayload(definition, result, options = {}) {
     updatedAt: now.toISOString(),
     nextRefreshAt: new Date(now.getTime() + definition.ttlMs).toISOString(),
     sourceStamp: result.sourceStamp || "",
+    cadence: getStoreCadence(definition.storeId, definition.period, definition.realtime),
     itemCount: result.items.length,
     items: result.items,
     warning: options.warning || result.warning || "",
@@ -1985,7 +2042,13 @@ async function buildDashboard(forceIds = []) {
     assetVersion: await getAssetVersion(),
     sections,
     focusBooks,
-    deltaBaselineAt: historyBaseline
+    deltaBaselineAt: historyBaseline,
+    // 화면이 수집 주기를 직접 적어 두면 서버 값을 바꿀 때 같이 안 고쳐져 거짓말이 된다.
+    // 실제로 그런 일이 있었다 — 배지가 "실시간 5분 / 일반 10분"으로 남아 있었다.
+    collectIntervals: {
+      realtimeMinutes: REALTIME_REFRESH_MS / 60000,
+      standardHours: STANDARD_REFRESH_MS / 3600000
+    }
   };
 
   try {

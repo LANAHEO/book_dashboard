@@ -739,6 +739,25 @@ body {
   font-weight: 700;
 }
 
+/* 서점이 밝힌 집계 기준. 우리 수집 시각과 구분되게 조금 눌러 둔다. */
+.panel-basis {
+  color: var(--muted-strong);
+  font-weight: 600;
+}
+
+.panel-basis.is-unknown {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.status-hint {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
 .panel-meta span + span::before {
   content: "";
   display: inline-block;
