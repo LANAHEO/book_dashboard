@@ -1433,10 +1433,14 @@ async function getAssetVersion() {
 }
 
 async function serveStatic(response, requestPath) {
-  const normalizedPath =
-    requestPath === "/" || requestPath === "/main" || requestPath === "/main/"
-      ? "/index.html"
-      : requestPath;
+  let normalizedPath = requestPath;
+
+  if (requestPath === "/" || requestPath === "/main" || requestPath === "/main/") {
+    normalizedPath = "/index.html";
+  } else if (requestPath === "/landing" || requestPath === "/landing/") {
+    normalizedPath = "/landing/index.html";
+  }
+
   const resolvedPath = path.resolve(PUBLIC_DIR, `.${normalizedPath}`);
 
   if (!resolvedPath.startsWith(PUBLIC_DIR)) {
