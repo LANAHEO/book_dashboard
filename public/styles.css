@@ -1780,6 +1780,13 @@ a.focus-rank-metric:focus-visible {
   border-radius: 10px;
   text-overflow: ellipsis;
   white-space: nowrap;
+  cursor: pointer;
+}
+
+a.focus-chip:hover {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  color: var(--primary);
 }
 
 .standard-grid {

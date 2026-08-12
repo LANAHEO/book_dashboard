@@ -697,6 +697,92 @@ function makeAladinPageUrl(url, page) {
   return pageUrl.toString();
 }
 
+function extractStoreItemId(storeId, link) {
+  const value = String(link || "");
+
+  if (storeId === "yes24") {
+    return (value.match(/\/goods\/(\d+)/i) || value.match(/goodsNo=(\d+)/i) || [])[1] || "";
+  }
+
+  if (storeId === "aladin") {
+    return (value.match(/[?&]ItemId=(\d+)/i) || [])[1] || "";
+  }
+
+  if (storeId === "kyobo") {
+    return (value.match(/\/detail\/([A-Z0-9]+)/i) || [])[1] || "";
+  }
+
+  return "";
+}
+
+function textFragmentAnchor(title) {
+  const text = String(title || "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!text) {
+    return "";
+  }
+
+  // 목록에서 말줄임되는 긴 제목도 앞부분만으로 매칭되게 한다.
+  const snippet = text.length > 32 ? text.slice(0, 32) : text;
+  return `#:~:text=${encodeURIComponent(snippet)}`;
+}
+
+function appendRankAnchor(storeId, pageUrl, link, title) {
+  if (!pageUrl) {
+    return "";
+  }
+
+  const base = pageUrl.split("#")[0];
+
+  // 상품 id 앵커(ordChk, addInputShop)는 카드 하단에 있어 제목이 화면 밖으로 밀린다.
+  // 제목 텍스트 조각으로 스크롤하면 클릭 직후 그 도서가 보이게 된다(Chrome/Edge).
+  const fragment = textFragmentAnchor(title);
+
+  if (fragment) {
+    return `${base}${fragment}`;
+  }
+
+  const itemId = extractStoreItemId(storeId, link);
+
+  if (storeId === "yes24" && itemId) {
+    return `${base}#ordChk_${itemId}`;
+  }
+
+  if (storeId === "aladin" && itemId) {
+    return `${base}#addInputShop_${itemId}`;
+  }
+
+  return base;
+}
+
+// 순위 내역 클릭 시 해당 서점의 목록 페이지 + 그 도서 제목 위치로 연다.
+// 예스24는 24권, 알라딘은 50권 단위로 페이지가 갈린다.
+// 교보문고는 SPA여도 Chromium 텍스트 조각(#:~:text=)으로 제목 위치까지 이동한다.
+function buildRankListUrl(storeId, sourceUrl, rank, link = "", title = "") {
+  if (!sourceUrl) {
+    return "";
+  }
+
+  const rankValue = Number(rank);
+  let pageUrl = sourceUrl;
+
+  try {
+    if (Number.isFinite(rankValue) && rankValue >= 1) {
+      if (storeId === "yes24" && !sourceUrl.includes("realtimebestseller")) {
+        pageUrl = makeYes24PageUrl(sourceUrl, Math.ceil(rankValue / 24));
+      } else if (storeId === "aladin") {
+        pageUrl = makeAladinPageUrl(sourceUrl, Math.ceil(rankValue / 50));
+      }
+    }
+  } catch (error) {
+    pageUrl = sourceUrl;
+  }
+
+  return appendRankAnchor(storeId, pageUrl, link, title);
+}
+
 function createHeaders(extra = {}) {
   return {
     "user-agent": USER_AGENT,
@@ -1446,7 +1532,13 @@ function buildFocusBooks(sections, catalog = []) {
             storeName: section.name,
             listId: list.id,
             listName: list.name,
-            listUrl: list.sourceUrl || "",
+            listUrl: buildRankListUrl(
+              section.id,
+              list.sourceUrl || "",
+              item.rank,
+              item.link,
+              item.title
+            ),
             group: list.group || "",
             categoryName: list.categoryName || "",
             realtime: Boolean(list.realtime),

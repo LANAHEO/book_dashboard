@@ -388,10 +388,23 @@ function renderFocusRank(label, appearance) {
     <strong>${escapeHtml(appearance.rank)}위</strong>
     <em class="focus-rank-source">${escapeHtml(source)}</em>
   `;
+  const href = appearance.listUrl || appearance.link;
 
-  return appearance.listUrl
-    ? `<a class="focus-rank-metric" href="${escapeHtml(appearance.listUrl)}" target="_blank" rel="noreferrer" title="${escapeHtml(`${source} 순위 페이지 열기`)}">${body}</a>`
+  return href
+    ? `<a class="focus-rank-metric" href="${escapeHtml(href)}" target="_blank" rel="noreferrer" title="${escapeHtml(`${source} ${appearance.rank}위 위치로 이동`)}">${body}</a>`
     : `<div class="focus-rank-metric">${body}</div>`;
+}
+
+function renderFocusAppearance(item) {
+  const label = `${item.storeName} · ${item.listName} · ${item.rank}위`;
+  // 해당 위가 있는 목록 페이지 + 그 도서 위치를 우선하고, 없으면 도서 상세로 간다.
+  const href = item.listUrl || item.link;
+
+  if (!href) {
+    return `<span class="focus-chip">${escapeHtml(label)}</span>`;
+  }
+
+  return `<a class="focus-chip" href="${escapeHtml(href)}" target="_blank" rel="noreferrer" title="${escapeHtml(`${label} 위치로 이동`)}">${escapeHtml(label)}</a>`;
 }
 
 function formatPublishedDate(value) {
@@ -461,12 +474,7 @@ function renderFocusBoardV2() {
                   ${appearances.length
                     ? appearances
                         .slice(0, 6)
-                        .map((item) => {
-                          const label = `${item.storeName} · ${item.listName} · ${item.rank}위`;
-                          return item.link
-                            ? `<a class="focus-chip" href="${escapeHtml(item.link)}" target="_blank" rel="noreferrer">${escapeHtml(label)}</a>`
-                            : `<span class="focus-chip">${escapeHtml(label)}</span>`;
-                        })
+                        .map((item) => renderFocusAppearance(item))
                         .join("")
                     : '<span class="focus-chip muted">현재 수집된 순위에는 없습니다.</span>'}
                 </div>
