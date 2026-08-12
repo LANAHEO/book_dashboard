@@ -395,16 +395,83 @@ function renderFocusRank(label, appearance) {
     : `<div class="focus-rank-metric">${body}</div>`;
 }
 
+// 직전 수집 대비 이동. 히스토리가 없으면(첫 수집) 아무것도 그리지 않는다.
+function renderRankDelta(item) {
+  if (item.isNew) {
+    return `<span class="rank-delta is-new">NEW</span>`;
+  }
+
+  if (typeof item.rankDelta !== "number") {
+    return "";
+  }
+
+  if (item.rankDelta > 0) {
+    return `<span class="rank-delta is-up">▲${escapeHtml(item.rankDelta)}</span>`;
+  }
+
+  if (item.rankDelta < 0) {
+    return `<span class="rank-delta is-down">▼${escapeHtml(Math.abs(item.rankDelta))}</span>`;
+  }
+
+  return `<span class="rank-delta is-flat">—</span>`;
+}
+
+// 목록마다 수집 주기가 달라(실시간 60분, 일·주간 6시간) "직전 수집"이 가리키는
+// 시각이 다르므로, 툴팁에 실제 기준 시각을 적어 둔다.
+function deltaHint(item) {
+  const baseline = state.dashboard && state.dashboard.deltaBaselineAt;
+
+  if (!baseline) {
+    return "";
+  }
+
+  if (item.isNew) {
+    return ` · ${formatDateTime(baseline)} 수집에는 없었음`;
+  }
+
+  if (typeof item.rankDelta !== "number") {
+    return "";
+  }
+
+  if (item.rankDelta === 0) {
+    return ` · ${formatDateTime(baseline)} 수집과 같은 순위`;
+  }
+
+  return ` · ${formatDateTime(baseline)} 수집 ${item.previousRank}위 대비`;
+}
+
 function renderFocusAppearance(item) {
   const label = `${item.storeName} · ${item.listName} · ${item.rank}위`;
+  const body = `${escapeHtml(label)}${renderRankDelta(item)}`;
   // 해당 위가 있는 목록 페이지 + 그 도서 위치를 우선하고, 없으면 도서 상세로 간다.
   const href = item.listUrl || item.link;
 
   if (!href) {
-    return `<span class="focus-chip">${escapeHtml(label)}</span>`;
+    return `<span class="focus-chip">${body}</span>`;
   }
 
-  return `<a class="focus-chip" href="${escapeHtml(href)}" target="_blank" rel="noreferrer" title="${escapeHtml(`${label} 위치로 이동`)}">${escapeHtml(label)}</a>`;
+  const hint = `${label} 위치로 이동${deltaHint(item)}`;
+
+  return `<a class="focus-chip" href="${escapeHtml(href)}" target="_blank" rel="noreferrer" title="${escapeHtml(hint)}">${body}</a>`;
+}
+
+// 순위에서 빠진 자리는 칩이 사라져 배지를 붙일 곳이 없으므로 따로 그린다.
+// 좋은 소식만 보이고 나쁜 소식이 침묵하는 걸 막는 쪽이 이 화면의 목적에 맞다.
+function renderDroppedOut(book) {
+  const dropped = book.droppedOut || [];
+
+  if (!dropped.length) {
+    return "";
+  }
+
+  return dropped
+    .slice(0, 4)
+    .map((item) => {
+      const label = `${item.storeName} · ${item.listName} · ${item.previousRank}위 → 이탈`;
+
+      return `<span class="focus-chip is-dropped" title="${escapeHtml(label)}">${escapeHtml(label)}</span>`;
+    })
+    .join("");
 }
 
 function formatPublishedDate(value) {
@@ -425,6 +492,11 @@ function renderFocusBoardV2() {
           <div class="section-label">Sangsang Square</div>
           <h2>상상스퀘어 도서 순위</h2>
           <p>상상스퀘어 신간을 자동으로 불러와 수집된 순위에서 노출을 찾고, 출간 최신순으로 표시합니다.</p>
+          ${state.dashboard && state.dashboard.deltaBaselineAt
+            ? `<p class="focus-delta-note">▲▼ 는 ${escapeHtml(
+                formatDateTime(state.dashboard.deltaBaselineAt)
+              )} 수집과 비교한 순위 변화입니다. NEW 는 그때 없던 노출입니다.</p>`
+            : ""}
         </div>
         <span class="section-count">${escapeHtml(focusBooks.length)}종 추적</span>
       </div>
@@ -451,11 +523,21 @@ function renderFocusBoardV2() {
               (item) => item.group === "category"
             );
 
+            const droppedOut = renderDroppedOut(book);
+            // 이번 수집에 없고 직전에는 있었다면 "진입 대기"가 아니라 이탈이다.
+            const statusLabel = appearances.length
+              ? "순위 확인"
+              : droppedOut
+                ? "순위 이탈"
+                : "진입 대기";
+
             return `
               <article class="focus-card">
                 <div class="focus-card-top">
-                  <span class="focus-status ${appearances.length ? "active" : ""}">
-                    ${appearances.length ? "순위 확인" : "진입 대기"}
+                  <span class="focus-status ${appearances.length ? "active" : ""}${
+                    !appearances.length && droppedOut ? " dropped" : ""
+                  }">
+                    ${statusLabel}
                   </span>
                   <span class="focus-appearance-count">
                     ${escapeHtml(formatPublishedDate(book.latestPublishedAt))} · ${escapeHtml(appearances.length)}곳 노출
@@ -471,12 +553,14 @@ function renderFocusBoardV2() {
                   ${renderFocusRank("분야 최고", categoryBest)}
                 </div>
                 <div class="focus-appearances">
-                  ${appearances.length
-                    ? appearances
-                        .slice(0, 6)
-                        .map((item) => renderFocusAppearance(item))
-                        .join("")
-                    : '<span class="focus-chip muted">현재 수집된 순위에는 없습니다.</span>'}
+                  ${appearances
+                    .slice(0, 6)
+                    .map((item) => renderFocusAppearance(item))
+                    .join("")}
+                  ${droppedOut}
+                  ${!appearances.length && !droppedOut
+                    ? '<span class="focus-chip muted">현재 수집된 순위에는 없습니다.</span>'
+                    : ""}
                 </div>
               </article>
             `;

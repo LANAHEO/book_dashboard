@@ -616,6 +616,141 @@ async function readDashboardSnapshot() {
   return { ...local, source: "file" };
 }
 
+function rankHistoryKey(bookKey, storeId, listId) {
+  return `${bookKey} ${storeId} ${listId}`;
+}
+
+// The newest timestamp already on file. Read this BEFORE inserting the current
+// collection, otherwise "previous" resolves to the collection being written.
+async function readPreviousCollectedAt() {
+  const rows = await supabaseRequest(
+    "rank_history?select=collected_at&order=collected_at.desc&limit=1"
+  );
+
+  return Array.isArray(rows) && rows[0] ? rows[0].collected_at || "" : "";
+}
+
+// One request for the whole previous collection. Looking each appearance up
+// individually would be ~63 round trips per rebuild.
+async function readRankHistoryAt(collectedAt) {
+  if (!collectedAt) {
+    return [];
+  }
+
+  const rows = await supabaseRequest(
+    `rank_history?collected_at=eq.${encodeURIComponent(collectedAt)}` +
+      "&select=book_key,store_id,list_id,rank,title"
+  );
+
+  return Array.isArray(rows) ? rows : [];
+}
+
+async function writeRankHistory(rows) {
+  if (!rows.length) {
+    return;
+  }
+
+  // ignore-duplicates makes a retried collection idempotent against the
+  // (book_key, store_id, list_id, collected_at) unique index.
+  await supabaseRequest("rank_history?on_conflict=book_key,store_id,list_id,collected_at", {
+    method: "POST",
+    headers: {
+      Prefer: "resolution=ignore-duplicates,return=minimal"
+    },
+    body: JSON.stringify(rows)
+  });
+}
+
+function collectRankHistoryRows(focusBooks, collectedAt) {
+  const rows = [];
+
+  focusBooks.forEach((book) => {
+    book.appearances.forEach((appearance) => {
+      if (!book.bookKey || !appearance.rank) {
+        return;
+      }
+
+      rows.push({
+        book_key: book.bookKey,
+        store_item_id: appearance.storeItemId || null,
+        title: appearance.title || book.title,
+        store_id: appearance.storeId,
+        list_id: appearance.listId,
+        rank: appearance.rank,
+        collected_at: collectedAt
+      });
+    });
+  });
+
+  return rows;
+}
+
+// Enriches each appearance with its move since the previous collection, and
+// records entries that were ranked last time but are absent now -- a book
+// falling out of the charts is the signal you most want and it has no
+// appearance left to hang a badge on.
+function applyRankDeltas(focusBooks, previousRows, nameLookup) {
+  const previousByKey = new Map(
+    previousRows.map((row) => [rankHistoryKey(row.book_key, row.store_id, row.list_id), row])
+  );
+  const seen = new Set();
+
+  focusBooks.forEach((book) => {
+    book.appearances.forEach((appearance) => {
+      const key = rankHistoryKey(book.bookKey, appearance.storeId, appearance.listId);
+      seen.add(key);
+
+      const previous = previousByKey.get(key);
+      if (!previous || !previous.rank) {
+        appearance.isNew = true;
+        return;
+      }
+
+      appearance.previousRank = previous.rank;
+      // Positive means the book climbed: rank 12 -> 9 is +3.
+      appearance.rankDelta = previous.rank - appearance.rank;
+    });
+  });
+
+  const droppedByBook = new Map();
+  previousByKey.forEach((row, key) => {
+    if (seen.has(key)) {
+      return;
+    }
+
+    const list = droppedByBook.get(row.book_key) || [];
+    list.push({
+      storeId: row.store_id,
+      storeName: nameLookup.stores.get(row.store_id) || row.store_id,
+      listId: row.list_id,
+      listName: nameLookup.lists.get(row.list_id) || row.list_id,
+      previousRank: row.rank
+    });
+    droppedByBook.set(row.book_key, list);
+  });
+
+  focusBooks.forEach((book) => {
+    const dropped = droppedByBook.get(book.bookKey);
+    if (dropped && dropped.length) {
+      book.droppedOut = dropped.sort((a, b) => a.previousRank - b.previousRank);
+    }
+  });
+}
+
+function buildNameLookup(sections) {
+  const stores = new Map();
+  const lists = new Map();
+
+  sections.forEach((section) => {
+    stores.set(section.id, section.name);
+    getSourceLists(section).forEach((list) => {
+      lists.set(list.id, list.name);
+    });
+  });
+
+  return { stores, lists };
+}
+
 async function writePersistedSource(id, payload, expiresAt) {
   try {
     await fs.mkdir(SOURCE_CACHE_DIR, { recursive: true });
@@ -1545,6 +1680,9 @@ function buildFocusBooks(sections, catalog = []) {
             rank: item.rank,
             title: item.title,
             link: item.link,
+            // The store's own product id is the most stable identity we have;
+            // normalized titles shift when a store retitles an edition.
+            storeItemId: extractStoreItemId(section.id, item.link),
             image: item.image,
             publisher: item.publisher || "",
             publishedAt: item.publishedAt || ""
@@ -1553,8 +1691,8 @@ function buildFocusBooks(sections, catalog = []) {
     });
   });
 
-  return [...booksByTitle.values()]
-    .map((book) => {
+  return [...booksByTitle.entries()]
+    .map(([bookKey, book]) => {
       const appearances = book.appearances;
       const realtimeAppearances = appearances.filter((item) => item.realtime);
       const rankBasis = realtimeAppearances.length ? realtimeAppearances : appearances;
@@ -1576,6 +1714,7 @@ function buildFocusBooks(sections, catalog = []) {
       });
 
       return {
+        bookKey,
         title: book.title,
         link: book.link || appearances.find((item) => item.link)?.link || "",
         bestRank,
@@ -1687,11 +1826,25 @@ async function buildDashboard(forceIds = []) {
     lists: lists.filter((list) => list.storeId === store.id)
   }));
 
+  const generatedAt = new Date().toISOString();
+  const focusBooks = buildFocusBooks(sections, catalog);
+
+  // Deltas are baked into the snapshot rather than computed in the browser, so
+  // a cold start serves them without waiting for a collection. History failures
+  // must never take the dashboard down with them.
+  let historyBaseline = "";
+  try {
+    historyBaseline = await recordRankHistory(focusBooks, sections, generatedAt);
+  } catch (error) {
+    console.error("[history] rank history step failed:", error);
+  }
+
   const payload = {
-    generatedAt: new Date().toISOString(),
+    generatedAt,
     assetVersion: await getAssetVersion(),
     sections,
-    focusBooks: buildFocusBooks(sections, catalog)
+    focusBooks,
+    deltaBaselineAt: historyBaseline
   };
 
   try {
@@ -1701,6 +1854,25 @@ async function buildDashboard(forceIds = []) {
   }
 
   return payload;
+}
+
+// Returns the timestamp the deltas are measured against ("" when there is no
+// earlier collection yet, which is how the UI knows to stay silent).
+async function recordRankHistory(focusBooks, sections, generatedAt) {
+  if (!getSupabaseConfig()) {
+    return "";
+  }
+
+  const previousCollectedAt = await readPreviousCollectedAt();
+  const previousRows = await readRankHistoryAt(previousCollectedAt);
+
+  if (previousRows.length) {
+    applyRankDeltas(focusBooks, previousRows, buildNameLookup(sections));
+  }
+
+  await writeRankHistory(collectRankHistoryRows(focusBooks, generatedAt));
+
+  return previousRows.length ? previousCollectedAt : "";
 }
 
 function getForcedSourceIds(refreshParam) {

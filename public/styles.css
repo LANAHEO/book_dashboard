@@ -629,6 +629,53 @@ body {
   color: var(--muted);
 }
 
+.focus-chip.is-dropped {
+  border-color: var(--danger-soft);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.focus-delta-note {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.rank-delta {
+  margin-left: 6px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+}
+
+.rank-delta.is-up {
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.rank-delta.is-down {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.rank-delta.is-new {
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+.rank-delta.is-flat {
+  color: var(--muted);
+}
+
+.focus-status.dropped {
+  border-color: var(--danger-soft);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
 .store-section,
 .store-grid,
 .store-header,
