@@ -907,6 +907,26 @@ function describeRankGap(items, perPage) {
     : "비도서 항목을 제외하고 도서만 표시합니다.";
 }
 
+// 교보 순위 페이지는 기본 20권씩 끊는다. 일간·주간·월간·분야별은 per로 한 쪽에
+// 다 담을 수 있어서(page와 함께 보내야 먹는다) 쪽 계산 없이 100위까지 한 페이지에
+// 올린다. 실시간만 per를 20 넘게 주면 목록이 깨져서 쪽 번호로 넘긴다.
+const KYOBO_PAGE_SIZE = 20;
+const KYOBO_FULL_PAGE_SIZE = 100;
+
+function makeKyoboPageUrl(url, rank) {
+  const pageUrl = new URL(url);
+  const realtime = pageUrl.pathname.includes("/realtime");
+
+  if (realtime) {
+    pageUrl.searchParams.set("page", String(Math.max(1, Math.ceil(rank / KYOBO_PAGE_SIZE))));
+    return pageUrl.toString();
+  }
+
+  pageUrl.searchParams.set("page", "1");
+  pageUrl.searchParams.set("per", String(KYOBO_FULL_PAGE_SIZE));
+  return pageUrl.toString();
+}
+
 function makeAladinPageUrl(url, page) {
   if (page <= 1) {
     return url;
@@ -982,13 +1002,8 @@ function appendRankAnchor(storeId, pageUrl, link, title) {
 // 순위 내역 클릭 시 해당 서점의 목록 페이지 + 그 도서 제목 위치로 연다.
 // 예스24는 24권, 알라딘은 50권 단위로 페이지가 갈린다.
 // 교보문고는 SPA여도 Chromium 텍스트 조각(#:~:text=)으로 제목 위치까지 이동한다.
-// 교보는 순위 페이지 링크를 만들지 않는다. 우리가 읽는 교보 API의 순위와 웹
-// 베스트셀러 페이지의 배열이 서로 달라서(수집 기준 21위가 1쪽, 45위가 3쪽,
-// 60위가 4쪽에 있는 식으로 균일한 쪽당 개수로 설명되지 않는다) 순위에서 쪽 번호를
-// 계산할 방법이 없다. 못 맞히는 위치로 보내 목록 맨 위에 떨구느니 상품 상세로
-// 보내는 편이 낫다. 예스24(24개/쪽)와 알라딘(50개/쪽)은 계산이 맞는 것을 확인했다.
 function buildRankListUrl(storeId, sourceUrl, rank, link = "", title = "") {
-  if (!sourceUrl || storeId === "kyobo") {
+  if (!sourceUrl) {
     return "";
   }
 
@@ -1001,6 +1016,8 @@ function buildRankListUrl(storeId, sourceUrl, rank, link = "", title = "") {
         pageUrl = makeYes24PageUrl(sourceUrl, Math.ceil(rankValue / 24));
       } else if (storeId === "aladin") {
         pageUrl = makeAladinPageUrl(sourceUrl, Math.ceil(rankValue / 50));
+      } else if (storeId === "kyobo") {
+        pageUrl = makeKyoboPageUrl(sourceUrl, rankValue);
       }
     }
   } catch (error) {
