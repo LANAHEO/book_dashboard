@@ -85,7 +85,13 @@ const STORE_CADENCE = {
     daily: "전일 판매 집계",
     weekly: "최근 7일 · 매일 1회 집계"
   },
-  aladin: {}
+  // 알라딘은 어느 페이지에도 집계 기준을 적지 않아 관측으로 확인했다.
+  // 두 번의 정시 경계(12시, 14시)에서 상위 20위 지문이 바뀌었고, 그 사이
+  // 13~18분 구간은 완전히 고정이었다. 서점이 공표한 값이 아니라 관측값이므로
+  // 화면에도 "관측"이라고 밝힌다.
+  aladin: {
+    realtime: "시간 단위로 관측됨"
+  }
 };
 
 function getStoreCadence(storeId, period, realtime) {
@@ -950,8 +956,13 @@ function appendRankAnchor(storeId, pageUrl, link, title) {
 // 순위 내역 클릭 시 해당 서점의 목록 페이지 + 그 도서 제목 위치로 연다.
 // 예스24는 24권, 알라딘은 50권 단위로 페이지가 갈린다.
 // 교보문고는 SPA여도 Chromium 텍스트 조각(#:~:text=)으로 제목 위치까지 이동한다.
+// 교보는 순위 페이지 링크를 만들지 않는다. 우리가 읽는 교보 API의 순위와 웹
+// 베스트셀러 페이지의 배열이 서로 달라서(수집 기준 21위가 1쪽, 45위가 3쪽,
+// 60위가 4쪽에 있는 식으로 균일한 쪽당 개수로 설명되지 않는다) 순위에서 쪽 번호를
+// 계산할 방법이 없다. 못 맞히는 위치로 보내 목록 맨 위에 떨구느니 상품 상세로
+// 보내는 편이 낫다. 예스24(24개/쪽)와 알라딘(50개/쪽)은 계산이 맞는 것을 확인했다.
 function buildRankListUrl(storeId, sourceUrl, rank, link = "", title = "") {
-  if (!sourceUrl) {
+  if (!sourceUrl || storeId === "kyobo") {
     return "";
   }
 
@@ -1783,8 +1794,30 @@ async function loadPublisherCatalog() {
   }
 }
 
+// 목록의 모든 책에 "그 책이 실제로 놓인 순위 페이지 위치" 링크를 붙인다. 상품 상세로
+// 보내면 몇 위였는지가 사라지므로, 순위를 확인하러 온 사람에겐 목록 위치가 맞다.
+// 서점 파서는 sourceUrl을 모르기 때문에 목록 단위인 여기서 계산한다.
+function attachListUrls(definition, items) {
+  if (!definition.sourceUrl) {
+    return items;
+  }
+
+  return items.map((item) => ({
+    ...item,
+    listUrl: buildRankListUrl(
+      definition.storeId,
+      definition.sourceUrl,
+      item.rank,
+      item.link,
+      item.title
+    )
+  }));
+}
+
 function buildPayload(definition, result, options = {}) {
   const now = new Date();
+  const items = attachListUrls(definition, result.items);
+
   return {
     id: definition.id,
     storeId: definition.storeId,
@@ -1803,8 +1836,8 @@ function buildPayload(definition, result, options = {}) {
     nextRefreshAt: new Date(now.getTime() + definition.ttlMs).toISOString(),
     sourceStamp: result.sourceStamp || "",
     cadence: getStoreCadence(definition.storeId, definition.period, definition.realtime),
-    itemCount: result.items.length,
-    items: result.items,
+    itemCount: items.length,
+    items,
     warning: options.warning || result.warning || "",
     error: options.error || "",
     stale: Boolean(options.stale)
@@ -1854,13 +1887,8 @@ function buildFocusBooks(sections, catalog = []) {
             storeName: section.name,
             listId: list.id,
             listName: list.name,
-            listUrl: buildRankListUrl(
-              section.id,
-              list.sourceUrl || "",
-              item.rank,
-              item.link,
-              item.title
-            ),
+            // buildPayload가 이미 항목마다 계산해 둔 값을 쓴다.
+            listUrl: item.listUrl || "",
             group: list.group || "",
             categoryName: list.categoryName || "",
             realtime: Boolean(list.realtime),

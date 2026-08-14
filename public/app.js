@@ -167,10 +167,16 @@ function renderItem(item) {
     ? `<div class="cover"><img src="${escapeHtml(item.image)}" alt="${escapeHtml(item.title)}" loading="lazy"></div>`
     : '<div class="cover"></div>';
 
-  const titleStart = item.link
-    ? `<a class="book-title" href="${escapeHtml(item.link)}" target="_blank" rel="noreferrer">`
+  // 순위를 보러 온 화면이므로 그 책이 실제로 놓인 목록 위치로 보낸다.
+  // 목록 위치를 못 만들었을 때만 상품 상세로 떨어진다.
+  const href = item.listUrl || item.link;
+  const hint = item.listUrl
+    ? `${item.title} · ${item.rank}위 위치로 이동`
+    : `${item.title} 상세 페이지 열기`;
+  const titleStart = href
+    ? `<a class="book-title" href="${escapeHtml(href)}" target="_blank" rel="noreferrer" title="${escapeHtml(hint)}">`
     : '<span class="book-title">';
-  const titleEnd = item.link ? "</a>" : "</span>";
+  const titleEnd = href ? "</a>" : "</span>";
   const publisherFlag = watchedPublisher
     ? `<span class="publisher-flag">${escapeHtml(WATCH_PUBLISHER_NAME)}</span>`
     : "";
