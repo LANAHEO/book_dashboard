@@ -881,6 +881,32 @@ function makeAladinUrl(period, cid = "") {
   return url.toString();
 }
 
+// 서점이 빈 페이지를 200으로 돌려주는 일이 있다. 그대로 두면 "항목이 적은 성공"이
+// 되어 loadSource가 직전 캐시로 물러나지 못하고, 1쪽이 비면 51위부터 시작하는
+// 반쪽 목록이 그대로 화면에 올라간다. 실제로 알라딘 실시간에서 상위권이 통째로
+// 사라진 적이 있다. 첫 쪽이 비면 수집 실패로 처리해 캐시를 지킨다.
+function assertFirstPageParsed(storeLabel, url, perPage) {
+  if (perPage.length && perPage[0].length === 0) {
+    throw new Error(`${storeLabel} 첫 페이지에서 목록을 찾지 못했습니다: ${url}`);
+  }
+}
+
+// 1위부터 시작하지 않으면 이유를 정확히 적는다. 비도서가 걸러진 것과 페이지가
+// 통째로 비어 온 것은 원인이 다른데 예전에는 둘 다 "비도서 제외"로 나왔다.
+function describeRankGap(items, perPage) {
+  // 1위부터 시작하면 빠진 것이 없다. 뒤쪽 페이지가 비는 것은 분야별 실시간처럼
+  // 목록 자체가 짧을 때 정상이므로, 그것만으로 경고를 띄우면 오탐이 된다.
+  if (!items.length || items[0].rank <= 1) {
+    return "";
+  }
+
+  const hasEmptyPage = perPage.some((page) => page.length === 0);
+
+  return hasEmptyPage
+    ? `일부 페이지를 읽지 못해 ${items[0].rank}위부터 표시합니다.`
+    : "비도서 항목을 제외하고 도서만 표시합니다.";
+}
+
 function makeAladinPageUrl(url, page) {
   if (page <= 1) {
     return url;
@@ -1460,13 +1486,17 @@ async function fetchYes24List(url, options = {}) {
       })
     )
   );
-  const blocks = htmlPages.flatMap((html) =>
+  const perPage = htmlPages.map((html) =>
     html.split(/<li class="[^"]*" data-goods-no="/).slice(1)
   );
+  assertFirstPageParsed("예스24", url, perPage);
+
+  const items = dedupeByRank(perPage.flat().map(mapYes24Block).filter(Boolean)).slice(0, limit);
 
   return {
-    items: dedupeByRank(blocks.map(mapYes24Block).filter(Boolean)).slice(0, limit),
-    sourceStamp: parseYes24Stamp(htmlPages[0])
+    items,
+    sourceStamp: parseYes24Stamp(htmlPages[0]),
+    warning: describeRankGap(items, perPage)
   };
 }
 
@@ -1584,18 +1614,16 @@ async function fetchAladinList(url, options = {}) {
       })
     )
   );
-  const blocks = htmlPages.flatMap((html) =>
-    html.split(/<div class="ss_book_box"[^>]*>/).slice(1)
-  );
+  const perPage = htmlPages.map((html) => html.split(/<div class="ss_book_box"[^>]*>/).slice(1));
+  assertFirstPageParsed("알라딘", url, perPage);
+
+  const blocks = perPage.flat();
   const items = dedupeByRank(blocks.map(mapAladinBlock).filter(Boolean)).slice(0, limit);
 
   return {
     items,
     sourceStamp: "",
-    warning:
-      items.length > 0 && items[0].rank > 1
-        ? "비도서 항목을 제외하고 도서만 표시합니다."
-        : ""
+    warning: describeRankGap(items, perPage)
   };
 }
 
