@@ -900,11 +900,9 @@ function describeRankGap(items, perPage) {
     return "";
   }
 
-  const hasEmptyPage = perPage.some((page) => page.length === 0);
-
-  return hasEmptyPage
-    ? `일부 페이지를 읽지 못해 ${items[0].rank}위부터 표시합니다.`
-    : "비도서 항목을 제외하고 도서만 표시합니다.";
+  // 이제 카테고리로 항목을 버리지 않으므로, 1위부터 시작하지 않는다면 남는 원인은
+  // 페이지를 못 읽은 것뿐이다.
+  return `일부 페이지를 읽지 못해 ${items[0].rank}위부터 표시합니다.`;
 }
 
 // 교보 순위 페이지는 기본 20권씩 끊는다. 일간·주간·월간·분야별은 per로 한 쪽에
@@ -1454,7 +1452,10 @@ function mapYes24Block(block) {
   const category = stripTags(extract(block, /<span class="gd_res">([\s\S]*?)<\/span>/));
   const title = stripTags(extract(block, /<a class="gd_name"[^>]*>([\s\S]*?)<\/a>/));
 
-  if (!rank || !title || (category && !category.includes("도서"))) {
+  // 서점 화면에 올라간 그대로를 보여 준다. 예전에는 "[도서]"가 아닌 항목을 버려서
+  // 만화·잡지가 사라졌고, 그 자리 순위가 통째로 비어 우리 책의 상대 위치까지
+  // 어긋났다(실시간 100위 중 75개만 표시됨). 카테고리는 버리지 말고 메타로 남긴다.
+  if (!rank || !title) {
     return null;
   }
 
@@ -1569,11 +1570,10 @@ function mapAladinBlock(block) {
     extract(block, /<a [^>]*class="bo3"[^>]*>([\s\S]*?)<\/a>/)
   );
 
-  if (
-    !rank ||
-    !title ||
-    /음반|DVD|블루레이|굿즈|문구|티켓|캘린더|달력/i.test(category)
-  ) {
+  // 예스24와 같은 이유로 카테고리 제외를 걷어냈다. 알라딘 순위에는 굿즈·음반이
+  // 섞여 있지만, 그것도 서점이 그 순위에 올려 둔 것이다. 빼 버리면 우리 순위가
+  // 서점 화면과 어긋난다.
+  if (!rank || !title) {
     return null;
   }
 
