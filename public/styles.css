@@ -1,23 +1,7 @@
+/* 아래쪽 :root가 실제 팔레트다. 여기 있던 파란 계열 팔레트는 그 팔레트가
+   덮어쓰지 않는 토큰(--success, --warning 등)만 살아남아, 그것들을 쓰던 규칙이
+   폐기된 색을 계속 참조하고 있었다. 이제 전부 아래 한 곳에서 정의한다. */
 :root {
-  --page: #f4f6f9;
-  --surface: #ffffff;
-  --surface-muted: #f8fafc;
-  --ink: #172033;
-  --muted: #667085;
-  --muted-strong: #475467;
-  --line: #d9e0ea;
-  --line-soft: #e8edf3;
-  --primary: #2563eb;
-  --primary-soft: #e8f0ff;
-  --success: #12805c;
-  --success-soft: #e8f7f1;
-  --warning: #b45309;
-  --warning-soft: #fff3db;
-  --danger: #b42318;
-  --danger-soft: #ffebe9;
-  --shadow: 0 10px 24px rgba(16, 24, 40, 0.08);
-  --shadow-soft: 0 4px 12px rgba(16, 24, 40, 0.05);
-  --radius: 8px;
   --transition: 160ms ease;
 }
 
@@ -114,7 +98,7 @@ body {
   border: 1px solid #bfdbfe;
   border-radius: 999px;
   background: var(--primary-soft);
-  color: #1d4ed8;
+  color: var(--ink);
   font-size: 12px;
   font-weight: 800;
   letter-spacing: 0;
@@ -140,7 +124,7 @@ body {
 
 .update-badge[data-badge-state="loading"],
 .update-badge[data-badge-state="updated"] {
-  border-color: #fed7aa;
+  border-color: var(--warning-soft);
   background: var(--warning-soft);
   color: var(--warning);
 }
@@ -230,7 +214,7 @@ body {
 .search-box input:focus {
   outline: none;
   border-color: #93c5fd;
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.14);
+  box-shadow: 0 0 0 3px rgba(17, 17, 17, 0.16);
 }
 
 .store-filter-group {
@@ -254,13 +238,13 @@ body {
 }
 
 .store-filter-button:hover {
-  border-color: #b6c2d2;
+  border-color: var(--line);
   background: #fff;
 }
 
 .store-filter-button.active {
-  border-color: #172033;
-  background: #172033;
+  border-color: var(--ink);
+  background: var(--ink);
   color: #fff;
 }
 
@@ -277,8 +261,8 @@ body {
 
 .publisher-alert-card {
   padding: 14px;
-  border-color: #fed7aa;
-  background: #fffaf0;
+  border-color: var(--warning-soft);
+  background: var(--warning-soft);
 }
 
 .publisher-alert-title {
@@ -290,7 +274,7 @@ body {
 
 .publisher-alert-note {
   margin: 4px 0 0;
-  color: #92400e;
+  color: var(--warning);
   font-size: 13px;
 }
 
@@ -315,19 +299,20 @@ body {
   background: #fff;
 }
 
+/* design.md의 서점 액센트. 칩·뱃지에만 쓰고 본문이나 CTA 배경에는 쓰지 않는다. */
 .publisher-alert-store-kyobo {
-  --publisher-store-accent: #2d8b57;
-  --publisher-store-soft: #e8f7f1;
+  --publisher-store-accent: var(--store-kyobo);
+  --publisher-store-soft: #e8f4ed;
 }
 
 .publisher-alert-store-yes24 {
-  --publisher-store-accent: #2156c9;
-  --publisher-store-soft: #e8f0ff;
+  --publisher-store-accent: var(--store-yes24);
+  --publisher-store-soft: #e6f2ff;
 }
 
 .publisher-alert-store-aladin {
-  --publisher-store-accent: #a33c3c;
-  --publisher-store-soft: #fff0f0;
+  --publisher-store-accent: var(--store-aladin);
+  --publisher-store-soft: #fff2e3;
 }
 
 .publisher-alert-store-head {
@@ -384,7 +369,7 @@ body {
 
 .publisher-alert-rank-top10 {
   background: #fee2e2;
-  color: #b42318;
+  color: var(--danger);
 }
 
 .publisher-alert-rank-top30 {
@@ -394,7 +379,7 @@ body {
 
 .publisher-alert-rank-top100 {
   background: #dbeafe;
-  color: #1d4ed8;
+  color: var(--ink);
 }
 
 .publisher-alert-rank-other {
@@ -424,7 +409,7 @@ body {
 
 .publisher-alert-more {
   margin: 10px 0 0;
-  color: #92400e;
+  color: var(--warning);
   font-size: 12px;
   font-weight: 800;
 }
@@ -581,7 +566,7 @@ body {
   min-width: 58px;
   height: 42px;
   border-radius: var(--radius);
-  background: #172033;
+  background: var(--ink);
   color: #fff;
   font-size: 16px;
   font-weight: 900;
@@ -621,7 +606,7 @@ body {
 }
 
 .focus-chip:hover {
-  border-color: #b6c2d2;
+  border-color: var(--line);
   background: #fff;
 }
 
@@ -842,7 +827,7 @@ body {
 }
 
 .rank-item-alert {
-  background: #fffaf0;
+  background: var(--warning-soft);
 }
 
 .rank-badge {
@@ -1098,26 +1083,49 @@ body {
 }
 
 /* 2026 mobile-first information architecture */
+/* design.md(Book-Radar-design)를 대시보드 본체에 적용한 팔레트.
+   토큰 이름은 그대로 두고 값만 design.md 토큰으로 바꿨다 — 스타일시트 곳곳의
+   var() 참조 150여 곳을 건드리지 않고 옮기기 위해서다. */
 :root {
-  --page: #f3f3ee;
+  /* canvas / soft-cloud */
+  --page: #ffffff;
   --surface: #ffffff;
-  --surface-muted: #f7f8f4;
-  --ink: #18201b;
-  --muted: #68716b;
-  --muted-strong: #455048;
-  --line: #dde2dc;
-  --line-soft: #e9ece7;
-  --primary: #245c45;
-  --primary-soft: #e7f1ec;
-  --signal: #c9f15a;
-  --signal-soft: #f0f9d6;
-  /* 순위 하락·이탈처럼 나쁜 신호에만 쓴다. 이 팔레트에 원래 없어서
-     순위 배지가 위쪽 폐기된 :root의 토큰을 참조하고 있었다. */
-  --danger: #b42318;
-  --danger-soft: #ffebe9;
-  --shadow: 0 18px 44px rgba(24, 32, 27, 0.1);
-  --shadow-soft: 0 7px 22px rgba(24, 32, 27, 0.06);
-  --radius: 16px;
+  --surface-muted: #f5f5f5;
+
+  /* ink / charcoal / mute */
+  --ink: #111111;
+  --muted: #707072;
+  --muted-strong: #39393b;
+  --stone: #9e9ea0;
+
+  /* hairline */
+  --line: #cacacb;
+  --line-soft: #e5e5e5;
+
+  /* CTA는 검정 필, 보조 면은 soft-cloud */
+  --primary: #111111;
+  --primary-soft: #f5f5f5;
+
+  /* 라임 액센트는 design.md에 없다. 실시간·활성 표시는 흑백 크롬으로 흡수한다. */
+  --signal: #111111;
+  --signal-soft: #f5f5f5;
+
+  /* sale은 경고·급등 신호에만 */
+  --danger: #d30005;
+  --danger-soft: #ffecec;
+  --warning: #d30005;
+  --warning-soft: #ffecec;
+  --success: #007d48;
+
+  /* 서점 액센트는 칩·뱃지에만 쓴다 */
+  --store-kyobo: #2d8b57;
+  --store-yes24: #0080ff;
+  --store-aladin: #ee7b00;
+
+  /* 카드는 flat. 그림자 참조가 남아 있어도 무해하도록 none으로 둔다. */
+  --shadow: none;
+  --shadow-soft: none;
+  --radius: 24px;
 }
 
 /* 화면 전환은 탭 방식이라 스크롤 애니메이션이 필요하지 않다. */
@@ -1126,11 +1134,10 @@ html {
 }
 
 body {
-  background:
-    radial-gradient(circle at 0 0, rgba(201, 241, 90, 0.16), transparent 26rem),
-    var(--page);
+  /* design.md: 그라데이션 장식 금지 */
+  background: var(--page);
   color: var(--ink);
-  font-family: "Pretendard", "SUIT", "Malgun Gothic", "Apple SD Gothic Neo", sans-serif;
+  font-family: "Pretendard", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   overflow-x: hidden;
 }
 
@@ -1154,7 +1161,7 @@ a {
   gap: 0;
   overflow: hidden;
   border-radius: 24px;
-  background: #18382b;
+  background: var(--ink);
   box-shadow: var(--shadow);
 }
 
@@ -1183,7 +1190,7 @@ a {
   height: 28px;
   border-radius: 9px;
   background: var(--signal);
-  color: #18382b;
+  color: var(--ink);
   font-size: 14px;
   font-weight: 950;
 }
@@ -1205,11 +1212,17 @@ a {
   letter-spacing: -0.04em;
 }
 
+/* 마스트헤드는 ink 바탕이라 밝은 배경용 --muted를 쓰면 대비가 모자란다.
+   on-dark 보조 텍스트는 stone을 쓴다. */
 .masthead-note {
   max-width: 750px;
   margin-top: 12px;
-  color: #c3d2ca;
+  color: var(--stone);
   font-size: 15px;
+}
+
+.masthead-status .status-hint {
+  color: var(--stone);
 }
 
 .masthead-status {
@@ -1231,15 +1244,15 @@ a {
 }
 
 .update-badge {
-  border-color: rgba(201, 241, 90, 0.38);
-  background: rgba(201, 241, 90, 0.12);
-  color: var(--signal);
+  border-color: var(--line);
+  background: var(--surface-muted);
+  color: var(--ink);
 }
 
 .update-badge[data-badge-state="loading"],
 .update-badge[data-badge-state="updated"] {
-  border-color: rgba(255, 220, 145, 0.48);
-  background: rgba(255, 220, 145, 0.12);
+  border-color: var(--line);
+  background: var(--surface-muted);
   color: #ffdc91;
 }
 
@@ -1283,7 +1296,7 @@ a {
 .view-nav button[aria-current="true"],
 .view-nav button[aria-current="true"]:hover,
 .view-nav button[aria-current="true"]:focus-visible {
-  background: #18382b;
+  background: var(--ink);
   color: #fff;
 }
 
@@ -1315,7 +1328,7 @@ a {
 
 .search-box input:focus {
   border-color: transparent;
-  box-shadow: 0 0 0 3px rgba(36, 92, 69, 0.16);
+  box-shadow: 0 0 0 3px rgba(17, 17, 17, 0.16);
 }
 
 .store-filter-button {
@@ -1327,8 +1340,8 @@ a {
 }
 
 .store-filter-button.active {
-  border-color: #18382b;
-  background: #18382b;
+  border-color: var(--ink);
+  background: var(--ink);
 }
 
 .summary-strip {
@@ -1379,7 +1392,7 @@ a {
   display: flex;
   gap: 7px;
   align-items: center;
-  color: #b42318;
+  color: var(--danger);
 }
 
 .live-label span {
@@ -1387,7 +1400,7 @@ a {
   height: 7px;
   border-radius: 999px;
   background: #ef4444;
-  box-shadow: 0 0 0 5px rgba(239, 68, 68, 0.12);
+  box-shadow: 0 0 0 5px rgba(211, 0, 5, 0.12);
 }
 
 .section-heading h2 {
@@ -1418,7 +1431,7 @@ a {
 }
 
 .realtime-board {
-  border-top: 5px solid var(--signal);
+  border-top: 2px solid var(--ink);
 }
 
 .realtime-total {
@@ -1560,8 +1573,8 @@ a {
 }
 
 .rank-range-button.active {
-  border-color: #18382b;
-  background: #18382b;
+  border-color: var(--ink);
+  background: var(--ink);
   color: #fff;
 }
 
@@ -1586,7 +1599,7 @@ a {
 
 .rank-item-leading .rank-badge {
   background: var(--signal-soft);
-  color: #46620a;
+  color: var(--ink);
 }
 
 .cover {
@@ -1651,7 +1664,7 @@ a {
   flex: 0 0 auto;
   min-height: 38px;
   padding: 0 14px;
-  border: 1px solid #d5dcd6;
+  border: 1px solid var(--line);
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.72);
   color: var(--muted-strong);
@@ -1661,8 +1674,8 @@ a {
 }
 
 .category-selector-button.active {
-  border-color: #18382b;
-  background: #18382b;
+  border-color: var(--ink);
+  background: var(--ink);
   color: #fff;
 }
 
@@ -1686,7 +1699,7 @@ a {
 
 .category-stepper button {
   min-height: 36px;
-  border: 1px solid #d5dcd6;
+  border: 1px solid var(--line);
   border-radius: 10px;
   background: #fff;
   color: var(--muted-strong);
@@ -1719,14 +1732,12 @@ a {
 }
 
 .focus-board-priority {
-  border-top: 5px solid var(--signal);
-  background:
-    linear-gradient(135deg, rgba(201, 241, 90, 0.14), transparent 38%),
-    var(--surface);
+  border-top: 2px solid var(--ink);
+  background: var(--surface);
 }
 
 .focus-board-priority .section-label {
-  color: #557613;
+  color: var(--ink);
 }
 
 .focus-grid {
@@ -1761,7 +1772,7 @@ a {
 
 .focus-status.active {
   background: var(--signal-soft);
-  color: #46620a;
+  color: var(--ink);
 }
 
 .focus-appearance-count {
@@ -1798,7 +1809,7 @@ a {
   display: block;
   padding: 11px;
   border-radius: 12px;
-  background: #18382b;
+  background: var(--ink);
   color: #fff;
   text-decoration: none;
 }
