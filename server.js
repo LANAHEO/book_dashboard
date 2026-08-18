@@ -47,6 +47,9 @@ const DASHBOARD_SNAPSHOT_ID = "latest";
 const REALTIME_REFRESH_MS = 60 * 60 * 1000;
 const STANDARD_REFRESH_MS = 6 * 60 * 60 * 1000;
 const REQUEST_TIMEOUT_MS = 15_000;
+// 지난 날짜의 순위는 다시 바뀌지 않으므로 한 번 받으면 오래 들고 있는다.
+// 오늘·이번 달은 아직 집계가 끝나지 않았으니 STANDARD_REFRESH_MS를 쓴다.
+const HISTORY_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
@@ -83,7 +86,9 @@ const STORE_CADENCE = {
   yes24: {
     realtime: "1시간 단위 업데이트",
     daily: "전일 판매 집계",
-    weekly: "최근 7일 · 매일 1회 집계"
+    // 과거 주를 조회할 수 있는 주별 목록으로 옮겼다. 종합 목록의 "최근 7일을 매일
+    // 재집계"가 아니라 월~일로 끊은 고정 주다 — 표시도 그에 맞춰 바꿨다.
+    weekly: "월~일 1주 집계"
   },
   // 알라딘은 어느 페이지에도 집계 기준을 적지 않아 관측으로 확인했다.
   // 두 번의 정시 경계(12시, 14시)에서 상위 20위 지문이 바뀌었고, 그 사이
@@ -107,7 +112,9 @@ function getStoreCadence(storeId, period, realtime) {
 const YES24_PERIOD_PATHS = {
   realtime: "realtimebestseller",
   daily: "daybestseller",
-  weekly: "bestseller"
+  // 주별 목록만 과거 주를 조회할 수 있다(saleYear·weekNo). 종합 베스트셀러
+  // 경로(bestseller)는 날짜 파라미터를 받지 않는다.
+  weekly: "weekbestseller"
 };
 const ALADIN_PERIOD_TYPES = {
   realtime: "NowBest",
@@ -1179,6 +1186,11 @@ function formatCompactDate(value) {
   return normalized;
 }
 
+// 서점이 날짜를 받고 돌려주는 형식이 YYYYMMDD라, 조각난 연·월·일을 그 형식으로 붙인다.
+function toCompactDate(year, month, day) {
+  return `${year}${String(Number(month)).padStart(2, "0")}${String(Number(day)).padStart(2, "0")}`;
+}
+
 function normalizePublishedAt(value) {
   const text = String(value || "").trim();
 
@@ -1510,10 +1522,21 @@ async function fetchYes24List(url, options = {}) {
   assertFirstPageParsed("예스24", url, perPage);
 
   const items = dedupeByRank(perPage.flat().map(mapYes24Block).filter(Boolean)).slice(0, limit);
+  let sourceStamp = parseYes24Stamp(htmlPages[0]);
+
+  // 주별 목록은 실시간·일별과 달리 "기준" 문구를 적지 않는다. 주 범위는 주 선택
+  // 목록에만 있어서 한 번 더 물어본다. 여기가 실패해도 순위는 멀쩡하므로
+  // 스탬프만 비워 두고 넘어간다.
+  if (!sourceStamp && url.includes(YES24_PERIOD_PATHS.weekly)) {
+    sourceStamp = await resolveYes24WeekStamp(url).catch((error) => {
+      console.error("[yes24] 주 범위 확인 실패:", error);
+      return "";
+    });
+  }
 
   return {
     items,
-    sourceStamp: parseYes24Stamp(htmlPages[0]),
+    sourceStamp,
     warning: describeRankGap(items, perPage)
   };
 }
@@ -1543,6 +1566,104 @@ function parseYes24Stamp(html) {
   }
 
   return "";
+}
+
+// 주별 목록의 주 선택 상자를 내려주는 AJAX 응답. option의 value가 주번호,
+// 라벨이 그 주의 날짜 범위다. 주 범위는 분야와 무관하게 같으므로 국내도서(001)
+// 하나만 물어본다.
+function makeYes24WeekScopeUrl(saleYear) {
+  return (
+    "https://www.yes24.com/product/category/BestSellerContents?categoryNumber=001" +
+    `&bestType=WEEK_BESTSELLER&type=week&saleYear=${saleYear}&weekNo=0&pageNumber=1&pageSize=24`
+  );
+}
+
+// 주번호는 연도별로 1부터 다시 세지 않고 계속 누적된다(1181 = 2026.08.10~16).
+// 그래서 날짜로 계산할 수 없고 이 목록에서 찾아야 한다.
+async function fetchYes24Weeks(saleYear) {
+  const html = await fetchText(makeYes24WeekScopeUrl(saleYear), {
+    accept: "text/html,application/xhtml+xml"
+  });
+  const optionsHtml = extract(
+    html,
+    /<select[^>]*id="scope_week"[^>]*>([\s\S]*?)<\/select>/i
+  );
+
+  return [...optionsHtml.matchAll(/<option([^>]*)>([\s\S]*?)<\/option>/gi)]
+    .map((match) => {
+      const weekNo = toNumber(extract(match[1], /value="(\d+)"/));
+      const range = stripTags(match[2]).match(
+        /(\d{1,2})월\s*(\d{1,2})일\s*~\s*(\d{1,2})월\s*(\d{1,2})일/
+      );
+
+      if (!weekNo || !range) {
+        return null;
+      }
+
+      // 라벨에는 연도가 없다. 목록에는 saleYear 안에서 끝나는 주만 담기므로
+      // (2026 목록의 마지막이 "12월 29일 ~ 01월 04일") 종료일이 saleYear이고,
+      // 시작 월이 종료 월보다 크면 시작일만 전년이다.
+      const endYear = Number(saleYear);
+      const startYear = Number(range[1]) > Number(range[3]) ? endYear - 1 : endYear;
+
+      return {
+        weekNo,
+        saleYear: endYear,
+        // 서점이 현재 기준으로 선택해 둔 주. 날짜를 안 줄 때 쓰는 값이다.
+        selected: /\sselected/i.test(match[1]),
+        start: toCompactDate(startYear, range[1], range[2]),
+        end: toCompactDate(endYear, range[3], range[4])
+      };
+    })
+    .filter(Boolean);
+}
+
+// 주간 목록이 6개(종합 + 분야 5)라 갱신마다 같은 응답을 여섯 번 받게 된다.
+// 교보 실시간 스냅샷과 같은 방식으로 한 번만 받아 나눠 쓴다.
+const yes24WeekCache = new Map();
+
+function loadYes24Weeks(saleYear) {
+  const now = Date.now();
+  const cached = yes24WeekCache.get(saleYear);
+
+  if (cached && cached.expiresAt > now) {
+    return cached.promise;
+  }
+
+  const entry = { expiresAt: now + STANDARD_REFRESH_MS };
+  entry.promise = fetchYes24Weeks(saleYear).catch((error) => {
+    if (yes24WeekCache.get(saleYear) === entry) {
+      yes24WeekCache.delete(saleYear);
+    }
+
+    throw error;
+  });
+  yes24WeekCache.set(saleYear, entry);
+
+  return entry.promise;
+}
+
+function formatYes24WeekStamp(week) {
+  if (!week) {
+    return "";
+  }
+
+  return `${formatCompactDate(week.start)} ~ ${formatCompactDate(week.end)}`;
+}
+
+// 목록 URL에 주번호가 있으면 그 주가, 없으면 서점이 골라 둔 주가 기준이다.
+async function resolveYes24WeekStamp(url) {
+  const target = new URL(url);
+  const weekNo = toNumber(target.searchParams.get("weekNo"));
+  const saleYear =
+    toNumber(target.searchParams.get("saleYear")) || new Date().getFullYear();
+  const weeks = await loadYes24Weeks(saleYear);
+
+  return formatYes24WeekStamp(
+    weekNo
+      ? weeks.find((week) => week.weekNo === weekNo)
+      : weeks.find((week) => week.selected)
+  );
 }
 
 function parseAladinPublisher(authorLine) {
@@ -2152,6 +2273,326 @@ async function recordRankHistory(focusBooks, sections, generatedAt) {
   return previousRows.length ? previousCollectedAt : "";
 }
 
+// 아래는 과거 날짜 조회 전용이다. 수집 스케줄러와 대시보드 스냅샷은 건드리지
+// 않는다 — 여기서 받은 목록은 source_snapshots에만 남는다.
+
+const HISTORY_DATE_FORMATS =
+  "하루는 YYYY-MM-DD(또는 YYYYMMDD), 그 달의 몇째 주는 YYYY-MM-W3(또는 YYYYMMW) 형식입니다.";
+
+// 400(요청이 틀림)과 502(서점이 못 줌)를 구분해야 해서 상태 코드를 달아 던진다.
+function httpError(status, message) {
+  const error = new Error(message);
+  error.status = status;
+  return error;
+}
+
+function withQuery(url, params) {
+  const target = new URL(url);
+
+  Object.entries(params).forEach(([key, value]) => {
+    target.searchParams.set(key, String(value));
+  });
+
+  return target.toString();
+}
+
+// 날짜의 뜻만 읽는다. 서점이 요구하는 파라미터 문자열은 buildHistoryRequest가 만든다.
+function parseHistoryDate(value) {
+  const text = String(value || "").trim();
+
+  if (!text) {
+    return { error: `date 파라미터가 필요합니다. ${HISTORY_DATE_FORMATS}` };
+  }
+
+  const today = new Date();
+  const day = text.match(/^(\d{4})-?(\d{2})-?(\d{2})$/);
+
+  if (day) {
+    const [year, month, date] = day.slice(1).map(Number);
+    const parsed = new Date(Date.UTC(year, month - 1, date));
+
+    // 2026-02-31 같은 없는 날짜를 Date는 조용히 다음 달로 넘긴다.
+    if (
+      parsed.getUTCFullYear() !== year ||
+      parsed.getUTCMonth() !== month - 1 ||
+      parsed.getUTCDate() !== date
+    ) {
+      return { error: `없는 날짜입니다: ${text}` };
+    }
+
+    const compact = toCompactDate(year, month, date);
+    const todayCompact = toCompactDate(
+      today.getFullYear(),
+      today.getMonth() + 1,
+      today.getDate()
+    );
+
+    if (compact > todayCompact) {
+      return { error: `아직 오지 않은 날짜입니다: ${text}` };
+    }
+
+    return {
+      kind: "day",
+      key: `${year}-${String(month).padStart(2, "0")}-${String(date).padStart(2, "0")}`,
+      compact,
+      current: compact === todayCompact
+    };
+  }
+
+  const week = text.match(/^(\d{4})-?(\d{2})-?[Ww]?([1-5])$/);
+
+  if (!week) {
+    return { error: `날짜 형식을 알 수 없습니다: ${text}. ${HISTORY_DATE_FORMATS}` };
+  }
+
+  const [year, month, weekOfMonth] = week.slice(1).map(Number);
+
+  if (month < 1 || month > 12) {
+    return { error: `없는 달입니다: ${text}` };
+  }
+
+  const yearMonth = `${year}${String(month).padStart(2, "0")}`;
+  const thisMonth = `${today.getFullYear()}${String(today.getMonth() + 1).padStart(2, "0")}`;
+
+  if (yearMonth > thisMonth) {
+    return { error: `아직 오지 않은 달입니다: ${text}` };
+  }
+
+  return {
+    kind: "week",
+    key: `${year}-${String(month).padStart(2, "0")}-W${weekOfMonth}`,
+    // 교보 종합 주간이 쓰는 7자리(YYYYMMW).
+    compact: `${yearMonth}${weekOfMonth}`,
+    year,
+    month,
+    week: weekOfMonth,
+    // 이번 달은 아직 주가 끝나지 않았을 수 있어 오래 캐시하지 않는다.
+    current: yearMonth === thisMonth
+  };
+}
+
+// 주번호는 누적 절대값이라 계산할 수 없다. 그 날짜를 품은 주를 서점의 주 목록에서
+// 찾는다. 연말 주는 다음 해 목록에 들어 있어(2025.12.29 ~ 2026.01.04) 한 번 더 본다.
+async function findYes24Week(compactDay) {
+  const year = Number(compactDay.slice(0, 4));
+  const thisYear = new Date().getFullYear();
+
+  for (const saleYear of [year, year + 1].filter((value) => value <= thisYear)) {
+    const weeks = await loadYes24Weeks(saleYear);
+    const week = weeks.find(
+      (entry) => entry.start <= compactDay && compactDay <= entry.end
+    );
+
+    if (week) {
+      return week;
+    }
+  }
+
+  return null;
+}
+
+// 서점·기간마다 날짜 파라미터의 이름과 자릿수가 다르다. 교보는 자릿수가 하나만
+// 틀려도 200에 빈 목록을 주므로(종합 주간 7자리, 나머지 8자리) 조합별 규칙을
+// 여기 한곳에만 둔다. 지원하지 않는 조합은 error를 담아 돌려준다.
+async function buildHistoryRequest(storeId, period, parsed) {
+  // 일간 차트는 완료된 하루를 집계한다 — 교보·예스24 모두 전일 기준이다. 오늘을
+  // 넘기면 예스24는 pageNumber를 무시하고 첫 쪽만 반복해서 24건짜리 목록을 200으로
+  // 돌려준다. 반쪽을 성공으로 넘기지 않도록 여기서 막는다.
+  if (period === "daily" && parsed.kind === "day" && parsed.current) {
+    return {
+      error:
+        "일간 순위는 완료된 하루만 조회합니다. 서점의 일간 집계는 전일 기준이라 오늘 날짜는 목록이 확정되지 않습니다. 어제 이전 날짜를 지정해 주세요."
+    };
+  }
+
+  if (storeId === "kyobo" && period === "daily") {
+    if (parsed.kind !== "day") {
+      return { error: `교보문고 일간은 하루 단위로만 조회합니다. ${HISTORY_DATE_FORMATS}` };
+    }
+
+    return {
+      baseId: "kyobo-online-daily",
+      query: { ymw: parsed.compact },
+      load: () =>
+        fetchKyoboList("online", {
+          page: 1,
+          per: RANK_LIMIT,
+          period: "001",
+          dsplDvsnCode: "001",
+          dsplTrgtDvsnCode: "002",
+          saleCmdtDsplDvsnCode: "TOT",
+          ymw: parsed.compact
+        })
+    };
+  }
+
+  // 교보는 주간 차트가 둘이고 날짜 형식으로 갈린다. 하루를 주면 온라인 주간이
+  // 그 날이 든 주로 스냅하고(응답 ymw는 16자리 범위), 몇째 주를 주면 종합 주간이
+  // 7자리 그대로 받는다.
+  if (storeId === "kyobo" && period === "weekly" && parsed.kind === "week") {
+    return {
+      baseId: "kyobo-total-weekly",
+      query: { ymw: parsed.compact },
+      load: () =>
+        fetchKyoboList("total", {
+          page: 1,
+          per: RANK_LIMIT,
+          period: "002",
+          bsslBksClstCode: "A",
+          ymw: parsed.compact
+        })
+    };
+  }
+
+  if (storeId === "kyobo" && period === "weekly") {
+    return {
+      baseId: "kyobo-online-weekly",
+      query: { ymw: parsed.compact },
+      load: () =>
+        fetchKyoboList("online", {
+          page: 1,
+          per: RANK_LIMIT,
+          period: "002",
+          dsplDvsnCode: "001",
+          dsplTrgtDvsnCode: "002",
+          saleCmdtDsplDvsnCode: "TOT",
+          ymw: parsed.compact
+        })
+    };
+  }
+
+  if (storeId === "yes24" && period === "daily") {
+    if (parsed.kind !== "day") {
+      return { error: `예스24 일별은 하루 단위로만 조회합니다. ${HISTORY_DATE_FORMATS}` };
+    }
+
+    return {
+      baseId: "yes24-day",
+      query: { saleDts: parsed.key },
+      load: (sourceUrl) =>
+        fetchYes24List(sourceUrl, { limit: RANK_LIMIT, pages: YES24_PAGES_FOR_100 })
+    };
+  }
+
+  if (storeId === "yes24" && period === "weekly") {
+    if (parsed.kind !== "day") {
+      return {
+        error: `예스24 주별은 그 주에 든 하루로 조회합니다. ${HISTORY_DATE_FORMATS}`
+      };
+    }
+
+    const week = await findYes24Week(parsed.compact);
+
+    if (!week) {
+      return {
+        error: `예스24 주별 목록에서 ${parsed.key}이 든 주를 찾지 못했습니다. 서점은 끝난 주까지만 목록에 올립니다.`
+      };
+    }
+
+    return {
+      baseId: "yes24-bestseller",
+      query: { saleYear: week.saleYear, weekNo: week.weekNo },
+      load: (sourceUrl) =>
+        fetchYes24List(sourceUrl, { limit: RANK_LIMIT, pages: YES24_PAGES_FOR_100 })
+    };
+  }
+
+  if (storeId === "aladin" && period === "weekly") {
+    if (parsed.kind !== "week") {
+      return {
+        error: `알라딘 주간은 그 달의 몇째 주로 조회합니다. ${HISTORY_DATE_FORMATS}`
+      };
+    }
+
+    return {
+      baseId: "aladin-weekly",
+      query: { Year: parsed.year, Month: parsed.month, Week: parsed.week },
+      load: (sourceUrl) =>
+        fetchAladinList(sourceUrl, { limit: RANK_LIMIT, pages: ALADIN_PAGES_FOR_100 })
+    };
+  }
+
+  // 알라딘 일간에는 날짜를 받는 페이지가 없다. 주간만 소급 조회된다.
+  if (storeId === "aladin" && period === "daily") {
+    return {
+      error: "알라딘 일간은 날짜 조회를 지원하지 않습니다. 알라딘은 주간만 소급 조회됩니다."
+    };
+  }
+
+  return { error: `지원하지 않는 조합입니다: store=${storeId} period=${period}` };
+}
+
+// 조회 전용. 같은 날짜를 다시 물으면 서점을 긁지 않고 캐시에서 돌려준다.
+async function loadHistoricalRanking(storeId, period, date) {
+  if (!STORES.some((store) => store.id === storeId)) {
+    throw httpError(
+      400,
+      `store가 잘못됐습니다: ${storeId || "(없음)"}. kyobo·yes24·aladin 중 하나여야 합니다.`
+    );
+  }
+
+  if (period !== "daily" && period !== "weekly") {
+    throw httpError(
+      400,
+      `period가 잘못됐습니다: ${period || "(없음)"}. daily 또는 weekly여야 합니다.`
+    );
+  }
+
+  const parsed = parseHistoryDate(date);
+
+  if (parsed.error) {
+    throw httpError(400, parsed.error);
+  }
+
+  const request = await buildHistoryRequest(storeId, period, parsed);
+
+  if (request.error) {
+    throw httpError(400, request.error);
+  }
+
+  const base = sourceById.get(request.baseId);
+  const sourceUrl = withQuery(base.sourceUrl, request.query);
+  const definition = {
+    ...base,
+    // 파일 캐시가 이 id를 파일명으로 쓰므로 콜론은 넣을 수 없다(Windows).
+    id: `hist-${storeId}-${period}-${parsed.key}`,
+    sourceUrl,
+    ttlMs: parsed.current ? STANDARD_REFRESH_MS : HISTORY_CACHE_TTL_MS,
+    load: () => request.load(sourceUrl)
+  };
+  const now = Date.now();
+  const cached = cache.get(definition.id);
+
+  if (cached && cached.expiresAt > now) {
+    return { ...cached.payload, cacheState: "hit" };
+  }
+
+  const persisted = await readPersistedSource(definition.id);
+
+  if (persisted && persisted.expiresAt > now) {
+    cache.set(definition.id, persisted);
+    return { ...persisted.payload, cacheState: "persisted" };
+  }
+
+  const result = await definition.load();
+
+  // 첫 쪽을 못 읽은 경우는 파서가 이미 던진다. 여기 걸리는 건 서점이 그 날짜의
+  // 목록을 아예 갖고 있지 않은 경우다 — 교보는 소급 범위를 벗어나거나 자릿수가
+  // 맞지 않으면 200에 빈 목록을 준다.
+  if (!result.items.length) {
+    throw httpError(
+      400,
+      `${base.name}에 ${parsed.key} 순위가 없습니다. 서점이 그 날짜의 목록을 제공하지 않습니다.`
+    );
+  }
+
+  const payload = buildPayload(definition, result);
+  cache.set(definition.id, { payload, expiresAt: now + definition.ttlMs });
+  await writePersistedSource(definition.id, payload, now + definition.ttlMs);
+
+  return { ...payload, cacheState: "miss" };
+}
+
 function getForcedSourceIds(refreshParam) {
   if (!refreshParam) {
     return [];
@@ -2415,6 +2856,29 @@ const server = http.createServer(async (request, response) => {
 
     const payload = await loadSource(id, { force });
     jsonResponse(response, 200, payload);
+    return;
+  }
+
+  if (url.pathname === "/api/ranking") {
+    try {
+      const payload = await loadHistoricalRanking(
+        url.searchParams.get("store") || "",
+        url.searchParams.get("period") || "",
+        url.searchParams.get("date") || ""
+      );
+      jsonResponse(response, 200, payload);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const status = Number(error.status) || 502;
+
+      // 400은 요청이 틀린 것이라 로그를 남기지 않는다. 502는 서점 쪽 문제다.
+      if (status >= 500) {
+        console.error("[ranking] 과거 순위 조회 실패:", message);
+      }
+
+      jsonResponse(response, status, { error: message });
+    }
+
     return;
   }
 
