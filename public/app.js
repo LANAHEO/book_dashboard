@@ -44,6 +44,8 @@ const WATCH_PUBLISHER_NAME = "상상스퀘어";
 const WATCH_PUBLISHER_KEY = WATCH_PUBLISHER_NAME.replace(/\s+/g, "").toLowerCase();
 const STORE_ALERT_ORDER = ["kyobo", "yes24", "aladin"];
 const RANK_PAGE_SIZE = 20;
+const FOCUS_APPEARANCE_LIMIT = 6;
+const FOCUS_DROPPED_LIMIT = 4;
 const CATEGORY_PERIODS = [
   { key: "realtime", label: "실시간" },
   { key: "daily", label: "일간" },
@@ -135,7 +137,9 @@ function getVisibleFocusBooks() {
     (state.dashboard?.focusBooks || [])
       .map((book) => ({
         ...book,
-        appearances: filterBySelectedStore(book.appearances || [])
+        appearances: filterBySelectedStore(book.appearances || []),
+        // 이탈도 같이 걸러야 교보를 골랐을 때 알라딘 이탈이 섞이지 않는다.
+        droppedOut: filterBySelectedStore(book.droppedOut || [])
       }))
       // 서점을 골라 보면 노출이 사라지는 책이 생기므로, 화면 기준으로 다시 뒤로 보낸다.
       // 정렬이 안정적이라 각 묶음 안의 출간 최신순은 그대로 유지된다.
@@ -143,6 +147,24 @@ function getVisibleFocusBooks() {
         (a, b) => Number(b.appearances.length > 0) - Number(a.appearances.length > 0)
       )
   );
+}
+
+// 카드는 노출을 묶음·순위로 정렬해 앞에서 여섯 개만, 이탈은 네 개만 그린다.
+// 요약도 이 두 함수를 지나가게 해서, 세는 것과 그리는 것이 같은 목록이 되게 한다.
+function visibleAppearances(book) {
+  const groupOrder = { "overall-realtime": 0, category: 1, standard: 2 };
+
+  return [...(book.appearances || [])]
+    .sort(
+      (a, b) =>
+        (groupOrder[a.group] ?? 9) - (groupOrder[b.group] ?? 9) ||
+        getRankValue(a.rank) - getRankValue(b.rank)
+    )
+    .slice(0, FOCUS_APPEARANCE_LIMIT);
+}
+
+function visibleDropouts(book) {
+  return (book.droppedOut || []).slice(0, FOCUS_DROPPED_LIMIT);
 }
 
 function searchableText(item) {
@@ -477,14 +499,13 @@ function renderFocusAppearance(item) {
 // 순위에서 빠진 자리는 칩이 사라져 배지를 붙일 곳이 없으므로 따로 그린다.
 // 좋은 소식만 보이고 나쁜 소식이 침묵하는 걸 막는 쪽이 이 화면의 목적에 맞다.
 function renderDroppedOut(book) {
-  const dropped = book.droppedOut || [];
+  const dropped = visibleDropouts(book);
 
   if (!dropped.length) {
     return "";
   }
 
   return dropped
-    .slice(0, 4)
     .map((item) => {
       // "이탈"을 앞에 둔다. 칩은 좁은 화면에서 말줄임되므로 뒤에 두면 하필
       // 뜻을 지닌 단어가 잘려 "88위 → 이..." 로 남는다.
@@ -531,6 +552,56 @@ function formatPublishedDate(value) {
   return `출간 ${text.replaceAll("-", ".")}`;
 }
 
+// 카드를 하나씩 훑지 않아도 이번 수집이 어느 쪽으로 움직였는지 보이게 접는다.
+// 세는 단위는 책이 아니라 노출(appearance)이다 — 한 책이 목록마다 따로 움직인다.
+// 카드에 실제로 그려지는 것만 센다. 화면 배지보다 큰 숫자를 적으면 요약이 방해가 된다.
+function summarizeFocusDeltas(books) {
+  const summary = { up: 0, down: 0, entered: 0, dropped: 0 };
+
+  books.forEach((book) => {
+    visibleAppearances(book).forEach((item) => {
+      if (item.isNew) {
+        summary.entered += 1;
+      }
+
+      if (typeof item.rankDelta !== "number") {
+        return;
+      }
+
+      if (item.rankDelta > 0) {
+        summary.up += 1;
+      } else if (item.rankDelta < 0) {
+        summary.down += 1;
+      }
+    });
+
+    summary.dropped += visibleDropouts(book).length;
+  });
+
+  return summary;
+}
+
+function renderFocusDeltaSummary(books) {
+  // 비교할 직전 수집이 없으면(첫 수집) 0을 늘어놓지 않고 줄 자체를 뺀다.
+  if (!(state.dashboard && state.dashboard.deltaBaselineAt)) {
+    return "";
+  }
+
+  const summary = summarizeFocusDeltas(books);
+  // 0인 항목은 적지 않는다. "상승 0"은 읽는 사람에게 아무것도 알려 주지 않는다.
+  // 단위는 "곳"이다 — 옆에 "N종 추적"이 붙어 있어 안 적으면 책 수로 읽힌다.
+  const parts = [
+    ["상승", summary.up],
+    ["하락", summary.down],
+    ["신규", summary.entered],
+    ["이탈", summary.dropped]
+  ]
+    .filter(([, count]) => count > 0)
+    .map(([label, count]) => `${label} ${escapeHtml(count)}곳`);
+
+  return `<p class="focus-delta-summary">${parts.length ? parts.join(" · ") : "변화 없음"}</p>`;
+}
+
 function renderFocusBoardV2() {
   const focusBooks = getVisibleFocusBooks();
 
@@ -546,23 +617,16 @@ function renderFocusBoardV2() {
                 formatDateTime(state.dashboard.deltaBaselineAt)
               )} 수집과 비교한 순위 변화입니다. NEW 는 그때 없던 노출입니다.</p>`
             : ""}
+          ${renderFocusDeltaSummary(focusBooks)}
         </div>
         <span class="section-count">${escapeHtml(focusBooks.length)}종 추적</span>
       </div>
       <div class="focus-grid">
         ${focusBooks
           .map((book) => {
-            const appearances = [...(book.appearances || [])].sort((a, b) => {
-              const groupOrder = {
-                "overall-realtime": 0,
-                category: 1,
-                standard: 2
-              };
-              return (
-                (groupOrder[a.group] ?? 9) - (groupOrder[b.group] ?? 9) ||
-                getRankValue(a.rank) - getRankValue(b.rank)
-              );
-            });
+            const appearances = book.appearances || [];
+            // 칩으로 그리는 건 이 중 앞쪽 일부다. 노출 개수와 최고 순위는 전부를 본다.
+            const shownAppearances = visibleAppearances(book);
             const overallBest = bestAppearanceFor(
               appearances,
               (item) => item.group === "overall-realtime"
@@ -602,8 +666,7 @@ function renderFocusBoardV2() {
                   ${renderFocusRank("분야 최고", categoryBest)}
                 </div>
                 <div class="focus-appearances">
-                  ${appearances
-                    .slice(0, 6)
+                  ${shownAppearances
                     .map((item) => renderFocusAppearance(item))
                     .join("")}
                   ${droppedOut}
