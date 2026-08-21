@@ -1,0 +1,66 @@
+name: 순위 수집
+
+# Vercel Hobby 플랜은 크론이 하루 1회로 제한돼, 매시 표현식은 배포 자체가 실패한다.
+# 그래서 스케줄을 GitHub Actions가 들고 Vercel의 /api/collect를 불러 준다.
+# Pro 플랜이면 vercel.json의 crons가 같은 일을 하므로 이 워크플로는 지워도 된다.
+
+on:
+  schedule:
+    # 서점은 정시 몇 분 뒤에 순위를 갱신한다(실측). 그 뒤에 가져온다.
+    - cron: "10 * * * *"
+    # 일간·주간 목록은 6시간마다 한 번 전수로.
+    - cron: "20 */6 * * *"
+  workflow_dispatch:
+    inputs:
+      scope:
+        description: "수집 범위"
+        required: true
+        default: realtime
+        type: choice
+        options: [realtime, all]
+
+concurrency:
+  group: collect
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 수집 호출
+        env:
+          BASE_URL: ${{ vars.DASHBOARD_BASE_URL }}
+          COLLECT_SECRET: ${{ secrets.COLLECT_SECRET }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${BASE_URL:-}" ] || [ -z "${COLLECT_SECRET:-}" ]; then
+            echo "DASHBOARD_BASE_URL 변수와 COLLECT_SECRET 시크릿을 설정해야 합니다." >&2
+            exit 1
+          fi
+
+          # 6시간 크론과 매시 크론이 같은 시간에 겹칠 수 있으므로, 전수 스케줄이면
+          # 그것을 우선한다. 수동 실행은 입력값을 따른다.
+          SCOPE="realtime"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            SCOPE="${{ inputs.scope }}"
+          elif [ "${{ github.event.schedule }}" = "20 */6 * * *" ]; then
+            SCOPE="all"
+          fi
+          echo "scope=$SCOPE"
+
+          # 응답 본문은 남기고 실패는 종료 코드로 드러낸다.
+          code=$(curl -sS -o /tmp/collect.json -w "%{http_code}" \
+            --max-time 600 \
+            -H "Authorization: Bearer $COLLECT_SECRET" \
+            "$BASE_URL/api/collect?scope=$SCOPE")
+
+          echo "HTTP $code"
+          cat /tmp/collect.json
+          echo
+
+          if [ "$code" != "200" ]; then
+            echo "수집이 실패했습니다." >&2
+            exit 1
+          fi

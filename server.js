@@ -41,6 +41,9 @@ const HOST = process.env.HOST || "0.0.0.0";
 const PORT = Number(process.env.PORT || 3000);
 const PUBLIC_DIR = path.join(__dirname, "public");
 const SOURCE_CACHE_DIR = path.join(__dirname, ".cache", "rankings");
+// Vercel 함수의 파일 시스템은 읽기 전용이고, 써진다 해도 호출마다 사라진다.
+// 그 환경에서는 파일 캐시를 건너뛰고 Supabase만 쓴다.
+const FILE_CACHE_ENABLED = !process.env.VERCEL;
 const DASHBOARD_SNAPSHOT_ID = "latest";
 
 // 서점 실시간은 약 1시간, 일·주간은 더 느리게 바뀌므로 수집 주기를 맞춤.
@@ -578,6 +581,10 @@ async function readSupabaseSource(id) {
 }
 
 async function writeDashboardSnapshot(payload) {
+  if (!FILE_CACHE_ENABLED) {
+    return;
+  }
+
   try {
     await fs.mkdir(SOURCE_CACHE_DIR, { recursive: true });
     await fs.writeFile(
@@ -820,6 +827,10 @@ function buildNameLookup(sections) {
 }
 
 async function writePersistedSource(id, payload, expiresAt) {
+  if (!FILE_CACHE_ENABLED) {
+    return;
+  }
+
   try {
     await fs.mkdir(SOURCE_CACHE_DIR, { recursive: true });
     await fs.writeFile(
@@ -2796,7 +2807,9 @@ function startSourceSchedulers() {
   }, STANDARD_REFRESH_MS);
 }
 
-const server = http.createServer(async (request, response) => {
+// 요청 처리를 함수로 떼어 둔다. 상시 서버(로컬·Render)는 createServer로 감싸 쓰고,
+// Vercel은 api/index.js가 이걸 그대로 서버리스 핸들러로 내보낸다.
+async function handleRequest(request, response) {
   if (!request.url) {
     jsonResponse(response, 400, { error: "Bad request" });
     return;
@@ -2882,6 +2895,67 @@ const server = http.createServer(async (request, response) => {
     return;
   }
 
+  // 서버리스에는 setInterval이 없으므로 수집을 밖에서 불러 준다(Vercel Cron 또는
+  // GitHub Actions). 토큰을 세워 두는 이유는 이 경로가 서점을 긁는 유일한 쓰기
+  // 경로여서, 공개돼 있으면 누구나 수집을 돌릴 수 있기 때문이다.
+  if (url.pathname === "/api/collect") {
+    // Vercel Cron은 CRON_SECRET으로 Authorization 헤더를 보내고, GitHub Actions 쪽은
+    // COLLECT_SECRET을 쓴다. 둘 중 아무거나 맞으면 통과시켜 트리거를 바꿔도 그대로 돈다.
+    const secrets = [process.env.COLLECT_SECRET, process.env.CRON_SECRET]
+      .map((value) => String(value || ""))
+      .filter(Boolean);
+
+    if (!secrets.length) {
+      jsonResponse(response, 503, {
+        error:
+          "COLLECT_SECRET(또는 CRON_SECRET)이 설정되지 않아 수집 트리거가 비활성입니다."
+      });
+      return;
+    }
+
+    const header = String(request.headers.authorization || "");
+    const provided = header.startsWith("Bearer ")
+      ? header.slice(7)
+      : url.searchParams.get("token") || "";
+
+    if (!secrets.includes(provided)) {
+      jsonResponse(response, 401, { error: "인증이 필요합니다." });
+      return;
+    }
+
+    // 기본은 실시간만 — 매시 호출되는 쪽이라 전수를 돌리면 서점 부하가 커진다.
+    // 일반 목록은 scope=all 로 6시간마다 따로 부른다.
+    const scope = url.searchParams.get("scope") === "all" ? "all" : "realtime";
+    const startedAt = Date.now();
+
+    try {
+      if (scope === "all") {
+        await Promise.allSettled([refreshRealtimeSources(), refreshStandardSources()]);
+      } else {
+        await refreshRealtimeSources();
+      }
+
+      const payload = await rebuildDashboardSnapshot(`collect:${scope}`);
+
+      jsonResponse(response, payload ? 200 : 500, {
+        ok: Boolean(payload),
+        scope,
+        generatedAt: payload ? payload.generatedAt : null,
+        elapsedMs: Date.now() - startedAt
+      });
+    } catch (error) {
+      console.error("[collect] failed:", error);
+      jsonResponse(response, 500, {
+        ok: false,
+        scope,
+        error: String(error.message || error),
+        elapsedMs: Date.now() - startedAt
+      });
+    }
+
+    return;
+  }
+
   if (url.pathname === "/api/health") {
     const supabaseConfigured = Boolean(getSupabaseConfig());
     const probe = await probeSupabase();
@@ -2912,15 +2986,35 @@ const server = http.createServer(async (request, response) => {
   }
 
   await serveStatic(response, url.pathname);
-});
+}
 
-loadEnvFile().then(async () => {
+// 서버리스에서는 프로세스가 요청마다 사라지므로 .env를 매 요청 앞에서 한 번만 읽고,
+// 그 프로미스를 재사용한다. 상시 서버는 부팅에서 이미 끝내 놓는다.
+let envReady = null;
+
+function ensureEnv() {
+  if (!envReady) {
+    envReady = loadEnvFile();
+  }
+
+  return envReady;
+}
+
+async function handleServerlessRequest(request, response) {
+  await ensureEnv();
+  await handleRequest(request, response);
+}
+
+async function startStandaloneServer() {
+  await ensureEnv();
   startSourceSchedulers();
 
   const probe = await probeSupabase();
   const storageLabel = probe.reachable
     ? "enabled"
     : `disabled (file cache only: ${probe.error})`;
+
+  const server = http.createServer(handleRequest);
 
   server.listen(PORT, HOST, () => {
     console.log(`Book ranking dashboard ready at http://${HOST}:${PORT}`);
@@ -2929,4 +3023,14 @@ loadEnvFile().then(async () => {
       `[scheduler] realtime=${REALTIME_REFRESH_MS / 60000}m standard=${STANDARD_REFRESH_MS / 3600000}h`
     );
   });
-});
+
+  return server;
+}
+
+module.exports = { handleRequest, handleServerlessRequest, ensureEnv };
+
+// Vercel은 이 파일을 require해서 핸들러만 쓰므로 리스너를 열면 안 된다.
+// 직접 실행됐을 때만 상시 서버로 뜬다.
+if (require.main === module) {
+  startStandaloneServer();
+}
