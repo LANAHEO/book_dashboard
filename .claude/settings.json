@@ -2,7 +2,9 @@
   "permissions": {
     "allow": [
       "Bash(node --check server.js)",
-      "Bash(node --check public/app.js)"
+      "Bash(node --check public/app.js)",
+      "Bash(node --check api/index.js)",
+      "WebFetch(domain:book-dashboard.vercel.app)"
     ]
   }
 }
