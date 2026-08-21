@@ -27,15 +27,13 @@ Book Radar는 원래 상시 실행되는 Node HTTP 서버였다. Vercel 함수�
 문제는 주기다. Hobby에서 `10 * * * *` 같은 매시 표현식은 **배포 자체가 실패**한다
 (`Hobby accounts are limited to daily cron jobs`).
 
-### Pro 플랜이면
+### 기본값: GitHub Actions (플랜 무관)
 
-`vercel.json`의 `crons`가 그대로 동작한다. 환경변수 `CRON_SECRET`만 넣으면 Vercel이
-`Authorization: Bearer` 헤더로 보내 준다. `.github/workflows/collect.yml`은 지워도 된다.
+`vercel.json`에 `crons`를 **넣지 않았다.** 매시 표현식은 Hobby에서 배포를 실패시키므로,
+플랜을 모르는 상태에서 첫 배포가 깨지지 않게 하는 쪽을 골랐다. 스케줄은 이미 들어 있는
+`.github/workflows/collect.yml`이 맡는다 — Hobby·Pro 모두 동작한다.
 
-### Hobby 플랜이면
-
-`vercel.json`에서 `crons` 블록을 **지워라**(두면 배포가 실패한다). 대신 이미 들어 있는
-GitHub Actions 워크플로가 스케줄을 맡는다:
+설정할 것:
 
 1. 리포 **Settings → Secrets and variables → Actions**
    - 시크릿 `COLLECT_SECRET`: 아무 긴 임의 문자열
@@ -44,6 +42,21 @@ GitHub Actions 워크플로가 스케줄을 맡는다:
 
 GitHub Actions 크론도 정시에 딱 맞지는 않는다(수 분 지연). 순위가 시간 단위로
 바뀌므로 실용상 문제는 없다.
+
+### Pro 플랜이라면 Vercel Cron으로 바꿔도 된다
+
+Pro는 분 단위 크론이 되므로 GitHub Actions 없이 Vercel이 직접 부를 수 있다.
+`vercel.json`에 아래를 넣고 환경변수 `CRON_SECRET`을 설정하면 Vercel이
+`Authorization: Bearer`로 보내 준다. 그 뒤 워크플로 파일은 지운다.
+
+```json
+"crons": [
+  { "path": "/api/collect?scope=realtime", "schedule": "10 * * * *" },
+  { "path": "/api/collect?scope=all", "schedule": "20 */6 * * *" }
+]
+```
+
+Hobby에서 이걸 넣으면 `Hobby accounts are limited to daily cron jobs` 로 배포가 실패한다.
 
 ## 환경변수
 

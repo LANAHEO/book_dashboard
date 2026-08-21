@@ -10,9 +10,5 @@
     { "source": "/main", "destination": "/index.html" },
     { "source": "/landing", "destination": "/landing/index.html" },
     { "source": "/api/(.*)", "destination": "/api/index.js" }
-  ],
-  "crons": [
-    { "path": "/api/collect?scope=realtime", "schedule": "10 * * * *" },
-    { "path": "/api/collect?scope=all", "schedule": "20 */6 * * *" }
   ]
 }
