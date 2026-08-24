@@ -923,23 +923,37 @@ function describeRankGap(items, perPage) {
   return `일부 페이지를 읽지 못해 ${items[0].rank}위부터 표시합니다.`;
 }
 
-// 교보 순위 페이지는 기본 20권씩 끊는다. 일간·주간·월간·분야별은 per로 한 쪽에
-// 다 담을 수 있어서(page와 함께 보내야 먹는다) 쪽 계산 없이 100위까지 한 페이지에
-// 올린다. 실시간만 per를 20 넘게 주면 목록이 깨져서 쪽 번호로 넘긴다.
-const KYOBO_PAGE_SIZE = 20;
-const KYOBO_FULL_PAGE_SIZE = 100;
+// 교보는 한 쪽에 담을 권수를 per로 정한다(page와 함께 보내야 먹는다). 우리는 언제나
+// page=1로 1위부터 담고, per만 그 책이 들어갈 만큼 키운다.
+//
+// 1위부터 담는 이유: 쪽 번호로 20권씩 끊으면 우리가 저장한 순위와 교보의 지금 순위가
+// 어긋나 그 책이 그 쪽에 아예 없는 일이 생긴다 — 실측 일간 11%, 주간 10%, 실시간 39%.
+// 그러면 스크롤할 대상이 없어 "눌렀는데 안 넘어간다"가 된다. 1위부터 담으면 순위가
+// 흔들려도 100위 안에 있는 한 그 책은 페이지에 남는다.
+//
+// per를 100으로 고정하지 않는 이유: 교보 목록은 클라이언트 렌더링이라 다 그려진 뒤에야
+// 텍스트 조각이 걸린다. 그릴 권수가 그대로 대기 시간이 된다. 실시간 33위 실측으로
+// per=100은 9.5초, per=60은 5.5초, per=40은 3.7초였다.
+const KYOBO_PAGE_STEP = 20;
+const KYOBO_MIN_PAGE_SIZE = 40;
+const KYOBO_MAX_PAGE_SIZE = 100;
 
 function makeKyoboPageUrl(url, rank) {
   const pageUrl = new URL(url);
-  const realtime = pageUrl.pathname.includes("/realtime");
 
-  if (realtime) {
-    pageUrl.searchParams.set("page", String(Math.max(1, Math.ceil(rank / KYOBO_PAGE_SIZE))));
+  // 분야별 주간처럼 교보가 101위 이상을 주는 목록이 있다. 한 쪽에 100권까지만
+  // 담기니 그때는 그 순위가 있는 쪽으로 넘긴다.
+  if (rank > KYOBO_MAX_PAGE_SIZE) {
+    pageUrl.searchParams.set("page", String(Math.ceil(rank / KYOBO_MAX_PAGE_SIZE)));
+    pageUrl.searchParams.set("per", String(KYOBO_MAX_PAGE_SIZE));
     return pageUrl.toString();
   }
 
+  const fitted = Math.ceil(rank / KYOBO_PAGE_STEP) * KYOBO_PAGE_STEP;
+  const per = Math.min(KYOBO_MAX_PAGE_SIZE, Math.max(KYOBO_MIN_PAGE_SIZE, fitted));
+
   pageUrl.searchParams.set("page", "1");
-  pageUrl.searchParams.set("per", String(KYOBO_FULL_PAGE_SIZE));
+  pageUrl.searchParams.set("per", String(per));
   return pageUrl.toString();
 }
 
@@ -983,8 +997,20 @@ function textFragmentAnchor(title) {
   }
 
   // 목록에서 말줄임되는 긴 제목도 앞부분만으로 매칭되게 한다.
-  const snippet = text.length > 32 ? text.slice(0, 32) : text;
+  //
+  // 다만 단어 중간에서 자르면 안 된다. 텍스트 조각은 단어 경계에서만 일치를
+  // 인정하므로 "Buy Sell Hold"를 "Buy Sell Ho"로 끊으면 제목이 화면에 그대로
+  // 있어도 매칭이 실패해 스크롤이 일어나지 않는다. 32자 안의 마지막 공백까지만
+  // 쓰고, 공백이 없으면(붙여 쓴 긴 제목) 자르지 않고 전체를 쓴다.
+  const snippet = text.length > 32 ? trimToWordBoundary(text, 32) : text;
   return `#:~:text=${encodeURIComponent(snippet)}`;
+}
+
+function trimToWordBoundary(text, limit) {
+  const head = text.slice(0, limit);
+  const lastSpace = head.lastIndexOf(" ");
+
+  return lastSpace > 0 ? head.slice(0, lastSpace) : text;
 }
 
 function appendRankAnchor(storeId, pageUrl, link, title) {
@@ -996,6 +1022,11 @@ function appendRankAnchor(storeId, pageUrl, link, title) {
 
   // 상품 id 앵커(ordChk, addInputShop)는 카드 하단에 있어 제목이 화면 밖으로 밀린다.
   // 제목 텍스트 조각으로 스크롤하면 클릭 직후 그 도서가 보이게 된다(Chrome/Edge).
+  //
+  // 교보는 목록이 클라이언트 렌더링이라 조각이 바로 걸리지 않는다. 크롬이 목록을
+  // 다 그린 뒤에 다시 찾아 주므로 실측 2.2~2.4초가 걸리고, 그 사이 목록 맨 위에
+  // 머문다. 느리지만 이 조각이 유일한 이동 수단이다 — 빼면 그 책은 화면 밖에
+  // 그대로 남아 아예 이동하지 않는다.
   const fragment = textFragmentAnchor(title);
 
   if (fragment) {
@@ -1016,8 +1047,9 @@ function appendRankAnchor(storeId, pageUrl, link, title) {
 }
 
 // 순위 내역 클릭 시 해당 서점의 목록 페이지 + 그 도서 제목 위치로 연다.
-// 예스24는 24권, 알라딘은 50권 단위로 페이지가 갈린다.
-// 교보문고는 SPA여도 Chromium 텍스트 조각(#:~:text=)으로 제목 위치까지 이동한다.
+// 예스24는 24권, 알라딘은 50권 단위로 쪽을 넘기고, 교보는 1위부터 그 책까지를
+// 한 쪽에 담는다. 예스24·알라딘은 서버 렌더링이라 스크롤이 즉시 걸리고, 교보는
+// 목록을 그린 뒤에야 걸려서 2~4초가 든다(appendRankAnchor 참고).
 function buildRankListUrl(storeId, sourceUrl, rank, link = "", title = "") {
   if (!sourceUrl) {
     return "";
