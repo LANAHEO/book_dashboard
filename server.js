@@ -3121,7 +3121,15 @@ async function startStandaloneServer() {
   return server;
 }
 
-module.exports = { handleRequest, handleServerlessRequest, ensureEnv };
+// 기본 내보내기는 요청 핸들러여야 한다. Vercel의 서비스 감지는 api/index.js가 아니라
+// 이 파일을 그대로 함수 진입점으로 잡는데(빌드 산출물 server.cjs), 그때 module.exports가
+// 객체면 "Invalid export found ... The default export must be a function or server"로
+// 람다가 부팅조차 못 하고 전 경로가 500이 된다. 실제로 프로덕션이 그 상태였다.
+// 이름 있는 내보내기는 속성으로 그대로 남겨 api/index.js와 테스트가 계속 쓰게 한다.
+module.exports = handleServerlessRequest;
+module.exports.handleRequest = handleRequest;
+module.exports.handleServerlessRequest = handleServerlessRequest;
+module.exports.ensureEnv = ensureEnv;
 
 // Vercel은 이 파일을 require해서 핸들러만 쓰므로 리스너를 열면 안 된다.
 // 직접 실행됐을 때만 상시 서버로 뜬다.
