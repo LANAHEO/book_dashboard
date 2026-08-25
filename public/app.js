@@ -12,8 +12,18 @@ const state = {
   categoryStore: "yes24",
   categoryPeriod: "realtime",
   categoryListByStore: {},
-  rankPages: {}
+  rankPages: {},
+  // null이면 화면 폭으로 정하고, 사용자가 한 번이라도 여닫으면 그 값을 따른다.
+  collectStatusOpen: null
 };
+
+// 모바일 규칙과 같은 경계를 쓴다(styles.css의 820px). 두 곳이 어긋나면
+// 접힌 채로 데스크톱 여백만 잡아먹는 상태가 생긴다.
+function isNarrowScreen() {
+  return typeof window.matchMedia === "function"
+    ? window.matchMedia("(max-width: 820px)").matches
+    : false;
+}
 
 const elements = {
   dashboard: document.getElementById("dashboard"),
@@ -1097,16 +1107,32 @@ function renderStoreStatus() {
     })
     .join("");
 
+  // 표 3장은 데스크톱에선 한눈에 들어오지만 모바일에선 첫 화면을 통째로 먹는다.
+  // 좁은 화면에서는 접어 두고, 넓은 화면에서는 펼친 채로 둔다.
+  // 사용자가 직접 여닫으면 그 선택을 갱신 후에도 유지한다.
+  const open = state.collectStatusOpen === null ? !isNarrowScreen() : state.collectStatusOpen;
+
   elements.collectStatus.innerHTML = `
-    <div class="cs-head">
-      <h2>데이터 수집 시점</h2>
-      <p>
+    <details class="cs-box"${open ? " open" : ""}>
+      <summary class="cs-summary">
+        <span class="cs-summary-title">데이터 수집 시점</span>
+        <span class="cs-summary-hint">서점 3곳 기준 보기</span>
+      </summary>
+      <p class="cs-lede">
         왼쪽은 <strong>서점이 그 순위를 언제 기준으로 집계했는지</strong>,
         오른쪽은 <strong>우리가 그것을 언제 가져왔는지</strong>입니다. 둘은 다른 값입니다.
       </p>
-    </div>
-    <div class="cs-grid">${cards}</div>
+      <div class="cs-grid">${cards}</div>
+    </details>
   `;
+
+  const box = elements.collectStatus.querySelector(".cs-box");
+
+  if (box) {
+    box.addEventListener("toggle", () => {
+      state.collectStatusOpen = box.open;
+    });
+  }
 }
 
 function renderDashboard() {
