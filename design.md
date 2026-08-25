@@ -6,22 +6,27 @@ description: |
   사진·캠페인 타이포가 말하고, UI 크롬은 흑·백·소프트 그레이와 필 CTA만 쓴다.
   폰트는 Pretendard만 사용. 기울임체(italic)는 쓰지 않는다.
 
+# 2026-08 리팔레트. 순검정(#111) + 순백 조합이 "칙칙하다"는 지적을 받아 바꿨다.
+# 잉크는 파란기를 조금 넣어 무채색이 탁해 보이지 않게 하고, 바탕은 종이 톤으로
+# 띄워 흰 카드가 분리되게 했다. 새 브랜드 색은 만들지 않았다 —
+# 이 화면의 색은 교보·예스24·알라딘 세 서점이 담당한다.
 colors:
-  primary: "#111111"
+  primary: "#181d2f"
   on-primary: "#ffffff"
+  page: "#f3f5fa"
   canvas: "#ffffff"
-  soft-cloud: "#f5f5f5"
-  ink: "#111111"
-  charcoal: "#39393b"
-  mute: "#707072"
-  stone: "#9e9ea0"
-  hairline: "#cacacb"
-  hairline-soft: "#e5e5e5"
-  sale: "#d30005"
-  success: "#007d48"
-  kyobo: "#2d8b57"
-  yes24: "#0080ff"
-  aladin: "#ee7b00"
+  soft-cloud: "#edf1f8"
+  ink: "#181d2f"
+  charcoal: "#313a51"
+  mute: "#59637a"
+  stone: "#8a94aa"
+  hairline: "#d6dce9"
+  hairline-soft: "#e7ecf5"
+  sale: "#d2264b"
+  success: "#0a7d54"
+  kyobo: "#12855c"
+  yes24: "#2f6bff"
+  aladin: "#e8720c"
 
 typography:
   display-campaign:
@@ -143,12 +148,24 @@ Book Radar는 Nike식 **에디토리얼 + 미니멀 커머스 크롬**을 따른
 
 | Token | Hex | Use |
 |---|---|---|
-| ink / primary | `#111111` | CTA, 헤드라인, 활성 칩 |
-| canvas | `#ffffff` | 페이지 배경, on-image CTA |
-| soft-cloud | `#f5f5f5` | 보조 면, 서치/세컨더리 |
-| mute | `#707072` | 보조 설명 |
-| hairline | `#cacacb` | 구분선 |
-| sale | `#d30005` | 경고/급등 신호만 |
+| ink / primary | `#181d2f` | CTA, 헤드라인, 활성 칩 |
+| page | `#f3f5fa` | 페이지 바탕 (카드를 띄우는 종이 톤) |
+| canvas | `#ffffff` | 카드 면 |
+| soft-cloud | `#edf1f8` | 보조 면, 서치/세컨더리 |
+| mute | `#59637a` | 보조 설명 |
+| hairline | `#d6dce9` | 구분선 |
+| sale | `#d2264b` | 경고/급등 신호만 |
+
+### 서점 색을 쓰는 자리
+
+세 서점 색이 이 화면의 유일한 채도다. 쓰는 곳은 세 군데뿐이다.
+
+1. 마스트헤드 상단 3분할 띠 — 장식이 아니라 "이 화면은 세 서점을 모은다"는 표시
+2. 순위 칩 (`.focus-chip`) — 점 + 옅은 바탕, 같은 책의 서점별 노출을 색으로 가른다
+3. 순위 타일 (`.focus-rank-metric`) — 옅은 바탕, 어느 서점 순위인지 먼저 읽히게
+
+본문 텍스트·CTA 배경에는 여전히 쓰지 않는다. 색은 `--store-accent` 인라인 변수로
+넘기고 실제 값은 `styles.css`의 토큰이 원본이다.
 
 ## Typography
 
@@ -187,6 +204,7 @@ Book Radar는 Nike식 **에디토리얼 + 미니멀 커머스 크롬**을 따른
 - Inter·Roboto·기본 시스템만으로 끝내지 말 것 (Pretendard CDN 로드)
 - 보라 그라데이션, 크림+테라코타, 카드 그림자 스택
 - 히어로에 통계 스트립·배지 오버레이 남발
+- 순검정(#111) 슬래브로 화면 위쪽을 누르는 것 — 2026-08에 걷어냈다
 
 ## Landing application
 

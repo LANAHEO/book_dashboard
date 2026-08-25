@@ -416,6 +416,19 @@ function bestAppearanceFor(appearances, predicate) {
   );
 }
 
+// 순위 타일에 그 서점 색을 얹기 위한 값. 팔레트는 styles.css의 토큰이 원본이고
+// 여기서는 그 토큰을 가리키기만 한다 — 색을 두 곳에 적어 두면 갈라진다.
+const STORE_ACCENT_VAR = {
+  kyobo: "var(--store-kyobo)",
+  yes24: "var(--store-yes24)",
+  aladin: "var(--store-aladin)"
+};
+
+function storeAccentStyle(storeId) {
+  const accent = STORE_ACCENT_VAR[storeId];
+  return accent ? ` style="--store-accent:${accent}"` : "";
+}
+
 function renderFocusRank(label, appearance) {
   if (!appearance) {
     return `
@@ -434,9 +447,11 @@ function renderFocusRank(label, appearance) {
   `;
   const href = appearance.listUrl || appearance.link;
 
+  const accent = storeAccentStyle(appearance.storeId);
+
   return href
-    ? `<a class="focus-rank-metric" href="${escapeHtml(href)}" target="_blank" rel="noreferrer" title="${escapeHtml(`${source} ${appearance.rank}위 위치로 이동`)}">${body}</a>`
-    : `<div class="focus-rank-metric">${body}</div>`;
+    ? `<a class="focus-rank-metric"${accent} href="${escapeHtml(href)}" target="_blank" rel="noreferrer" title="${escapeHtml(`${source} ${appearance.rank}위 위치로 이동`)}">${body}</a>`
+    : `<div class="focus-rank-metric"${accent}>${body}</div>`;
 }
 
 // 직전 수집 대비 이동. 히스토리가 없으면(첫 수집) 아무것도 그리지 않는다.
@@ -496,7 +511,7 @@ function renderFocusAppearance(item) {
 
   const hint = `${label} 위치로 이동${deltaHint(item)}`;
 
-  return `<a class="focus-chip" href="${escapeHtml(href)}" target="_blank" rel="noreferrer" title="${escapeHtml(hint)}">${body}</a>`;
+  return `<a class="focus-chip"${storeAccentStyle(item.storeId)} href="${escapeHtml(href)}" target="_blank" rel="noreferrer" title="${escapeHtml(hint)}">${body}</a>`;
 }
 
 // 순위에서 빠진 자리는 칩이 사라져 배지를 붙일 곳이 없으므로 따로 그린다.

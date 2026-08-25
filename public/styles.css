@@ -2384,3 +2384,194 @@ a.focus-chip:hover {
     padding: 12px 13px 4px;
   }
 }
+
+/* ══════════════════════════════════════════════════════════════════════
+   2026-08 리팔레트: "검정 톤이라 칙칙하다"
+
+   문제는 세 가지였다.
+   1) 마스트헤드가 순검정 슬래브라 화면 위쪽을 무겁게 눌렀다.
+   2) 순위 타일이 전부 검정이라 그 무게가 카드마다 반복됐다.
+   3) 바탕이 순백이고 크롬이 무채색뿐이라 카드가 떠 보이지 않았다.
+      게다가 이전 초록 팔레트의 잔재(#dce9e2, #aabdb2)가 검정 위에 남아 탁했고,
+      --signal이 --ink와 같은 값이라 브랜드 마크가 검정 위 검정으로 안 보였다.
+
+   고친 방향: 그을음 검정 대신 파란기 있는 잉크, 종이 톤 바탕으로 카드 분리,
+   그리고 이미 정의돼 있던 서점 3색이 실제로 일하게 한다. 새 브랜드 색을
+   만들지 않았다 — 이 화면의 주인공은 교보·예스24·알라딘이다.
+   flat 카드와 필 CTA는 design.md 그대로 유지한다(그림자 없음).
+   ══════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* 종이 톤. 순백 카드가 순백 바탕에 놓이면 경계가 사라진다. */
+  --page: #f3f5fa;
+  --surface: #ffffff;
+  --surface-muted: #edf1f8;
+
+  /* 그을음 검정(#111) 대신 잉크. 파란기가 조금 있어야 회색 계열이 탁해지지 않는다. */
+  --ink: #181d2f;
+  --muted: #59637a;
+  --muted-strong: #313a51;
+  --stone: #8a94aa;
+
+  --line: #d6dce9;
+  --line-soft: #e7ecf5;
+
+  --primary: #181d2f;
+  --primary-soft: #edf1f8;
+
+  /* --signal이 --ink와 같으면 그 위에 얹는 표식이 사라진다. 밝은 쪽으로 뗀다. */
+  --signal: #ffffff;
+  --signal-soft: #edf1f8;
+
+  --danger: #d2264b;
+  --danger-soft: #ffe9ee;
+  --warning: #b86a00;
+  --warning-soft: #fff3e2;
+  --success: #0a7d54;
+
+  /* 채도를 조금 올려 칩·타일에서 실제로 읽히게 했다. */
+  --store-kyobo: #12855c;
+  --store-yes24: #2f6bff;
+  --store-aladin: #e8720c;
+}
+
+/* ── 마스트헤드: 검정 슬래브 → 흰 카드 + 서점 3색 띠 ────────────────── */
+.masthead {
+  position: relative;
+  border: 1px solid var(--line-soft);
+  background: var(--surface);
+}
+
+/* 장식용 그라데이션이 아니라 세 서점을 나타내는 3분할 띠다.
+   이 화면이 무엇을 모으는지 한 줄로 말한다. */
+.masthead::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 3px;
+  background: linear-gradient(
+    90deg,
+    var(--store-kyobo) 0 33.34%,
+    var(--store-yes24) 33.34% 66.67%,
+    var(--store-aladin) 66.67% 100%
+  );
+}
+
+.masthead h1 {
+  color: var(--ink);
+}
+
+.eyebrow {
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.masthead-note {
+  color: var(--muted);
+}
+
+.brand-mark {
+  background: var(--ink);
+  color: #fff;
+}
+
+.masthead-status {
+  border-left: 1px solid var(--line-soft);
+  color: var(--ink);
+}
+
+.masthead-status .status-label,
+.masthead-status .status-hint {
+  color: var(--muted);
+}
+
+.masthead-status .status-hint {
+  color: var(--stone);
+}
+
+.update-badge {
+  border: 1px solid var(--line);
+  background: var(--surface-muted);
+  color: var(--muted-strong);
+}
+
+/* 갱신 직후에만 잠깐 초록으로 알린다. 이전 팔레트의 #ffdc91은 흰 배경에서 읽히지 않았다. */
+.update-badge[data-badge-state="updated"] {
+  border-color: color-mix(in srgb, var(--success) 35%, var(--line));
+  background: color-mix(in srgb, var(--success) 8%, #fff);
+  color: var(--success);
+}
+
+.update-badge[data-badge-state="loading"] {
+  border-color: var(--line);
+  background: var(--surface-muted);
+  color: var(--muted);
+}
+
+.view-nav {
+  border-color: var(--line-soft);
+  background: rgba(255, 255, 255, 0.92);
+}
+
+/* ── 순위 타일: 검정 블록 → 그 서점 색을 옅게 깐 타일 ─────────────────
+   같은 카드 안에서 어느 서점 순위인지 색으로 먼저 읽힌다. */
+.focus-rank-metric {
+  border: 1px solid color-mix(in srgb, var(--store-accent, var(--ink)) 22%, var(--line-soft));
+  background: color-mix(in srgb, var(--store-accent, var(--ink)) 7%, #fff);
+  color: var(--ink);
+}
+
+.focus-rank-metric strong {
+  color: var(--ink);
+}
+
+.focus-rank-metric span,
+.focus-rank-metric .focus-rank-source {
+  color: var(--muted);
+}
+
+.focus-rank-metric:hover,
+.focus-rank-metric:focus-visible {
+  border-color: color-mix(in srgb, var(--store-accent, var(--ink)) 45%, var(--line));
+  background: color-mix(in srgb, var(--store-accent, var(--ink)) 12%, #fff);
+  outline: none;
+}
+
+.focus-rank-metric.muted {
+  border: 1px dashed var(--line);
+  background: var(--surface-muted);
+  color: var(--muted);
+}
+
+.focus-rank-metric.muted strong {
+  color: var(--muted-strong);
+}
+
+/* 수집 시점 카드도 같은 종이 톤 위에 놓이게 */
+.cs-card {
+  border-color: var(--line-soft);
+}
+
+/* 순위 칩에도 서점 색을 붙인다. design.md가 서점 액센트를 허용한 자리가
+   정확히 칩·뱃지다. 같은 책이 여러 서점에 걸쳐 있을 때 색으로 먼저 갈린다. */
+.focus-chip {
+  border-color: color-mix(in srgb, var(--store-accent, var(--ink)) 18%, var(--line-soft));
+  background: color-mix(in srgb, var(--store-accent, var(--ink)) 5%, #fff);
+}
+
+.focus-chip::before {
+  content: "";
+  flex: none;
+  width: 6px;
+  height: 6px;
+  margin-right: 7px;
+  border-radius: 999px;
+  background: var(--store-accent, var(--muted));
+}
+
+a.focus-chip:hover,
+a.focus-chip:focus-visible {
+  border-color: color-mix(in srgb, var(--store-accent, var(--ink)) 42%, var(--line));
+  background: color-mix(in srgb, var(--store-accent, var(--ink)) 11%, #fff);
+  outline: none;
+}
