@@ -2244,6 +2244,55 @@ async function loadSource(id, options = {}) {
   }
 }
 
+// 화면 상단에 "우리 갱신 주기"만 적혀 있으면, 그 숫자가 순위의 집계 기준인지 우리가
+// 긁어온 시각인지 구분되지 않는다. 둘은 다른 값이다 — 교보 일간은 전일 판매를 집계하고
+// 우리는 6시간마다 그걸 가져온다. 그래서 서점·기간마다 세 가지를 따로 내려준다.
+//   collectedAt  우리가 서점에서 가져온 시각
+//   sourceStamp  서점이 스스로 밝힌 그 순위의 기준 시점
+//   cadence      서점이 무엇을 단위로 집계하는지
+const STATUS_PERIOD_ORDER = ["realtime", "daily", "weekly", "monthly"];
+
+function buildStoreStatus(sections) {
+  return sections.map((section) => {
+    const groups = [];
+
+    for (const list of section.lists) {
+      // 파생 목록은 같은 수집을 다시 담고 있어 시각이 중복된다.
+      if (list.derived) {
+        continue;
+      }
+
+      const key = list.realtime ? "realtime" : list.period || "";
+
+      if (!key || groups.some((group) => group.key === key)) {
+        continue;
+      }
+
+      groups.push({
+        key,
+        label: PERIOD_LABELS[key] || list.typeLabel || key,
+        collectedAt: list.updatedAt || "",
+        nextRefreshAt: list.nextRefreshAt || "",
+        sourceStamp: list.sourceStamp || "",
+        cadence: list.cadence || "",
+        stale: Boolean(list.stale),
+        error: list.error || ""
+      });
+    }
+
+    groups.sort(
+      (a, b) => STATUS_PERIOD_ORDER.indexOf(a.key) - STATUS_PERIOD_ORDER.indexOf(b.key)
+    );
+
+    return {
+      storeId: section.id,
+      storeName: section.name,
+      accent: section.accent || "",
+      groups
+    };
+  });
+}
+
 async function buildDashboard(forceIds = []) {
   const [lists, catalog] = await Promise.all([
     Promise.all(
@@ -2279,6 +2328,7 @@ async function buildDashboard(forceIds = []) {
     assetVersion: await getAssetVersion(),
     sections,
     focusBooks,
+    storeStatus: buildStoreStatus(sections),
     deltaBaselineAt: historyBaseline,
     // 화면이 수집 주기를 직접 적어 두면 서버 값을 바꿀 때 같이 안 고쳐져 거짓말이 된다.
     // 실제로 그런 일이 있었다 — 배지가 "실시간 5분 / 일반 10분"으로 남아 있었다.
@@ -2656,10 +2706,17 @@ function getForcedSourceIds(refreshParam) {
   return [];
 }
 
-function jsonResponse(response, statusCode, payload) {
+// 스냅샷은 수집이 돌 때만 바뀌므로(실시간 60분, 일반 6시간) CDN이 들고 있어도 된다.
+// no-store로 막아 두면 방문할 때마다 함수를 깨우고 Supabase까지 다녀와서 2.6초가 든다.
+// max-age=0으로 브라우저는 매번 확인하게 두고, s-maxage로 CDN이 60초간 그대로 내주며,
+// stale-while-revalidate 덕에 그 뒤로도 먼저 보여 주고 뒤에서 새로 받는다.
+const SNAPSHOT_CACHE_CONTROL =
+  "public, max-age=0, s-maxage=60, stale-while-revalidate=600";
+
+function jsonResponse(response, statusCode, payload, cacheControl = "no-store") {
   response.writeHead(statusCode, {
     "content-type": "application/json; charset=utf-8",
-    "cache-control": "no-store"
+    "cache-control": cacheControl
   });
   response.end(JSON.stringify(payload));
 }
@@ -2862,11 +2919,16 @@ async function handleRequest(request, response) {
       try {
         const snapshot = await readDashboardSnapshot();
         if (snapshot && snapshot.payload && Array.isArray(snapshot.payload.sections)) {
-          jsonResponse(response, 200, {
-            ...snapshot.payload,
-            cacheState: snapshot.source || "snapshot",
-            snapshotUpdatedAt: snapshot.updatedAt
-          });
+          jsonResponse(
+            response,
+            200,
+            {
+              ...snapshot.payload,
+              cacheState: snapshot.source || "snapshot",
+              snapshotUpdatedAt: snapshot.updatedAt
+            },
+            SNAPSHOT_CACHE_CONTROL
+          );
           return;
         }
       } catch (error) {

@@ -22,6 +22,7 @@ const elements = {
   searchInput: document.getElementById("search-input"),
   storeFilters: document.getElementById("store-filters"),
   viewNav: document.querySelector(".view-nav"),
+  collectStatus: document.getElementById("collect-status"),
   autoRefreshBadge: document.getElementById("auto-refresh-badge"),
   autoRefreshText: document.getElementById("auto-refresh-text")
 };
@@ -37,7 +38,9 @@ function badgeIdleText() {
     return BADGE_IDLE_FALLBACK;
   }
 
-  return `자동 갱신 · 실시간 ${intervals.realtimeMinutes}분 / 일반 ${intervals.standardHours}시간`;
+  // "자동 갱신"만 적으면 이 숫자가 순위의 집계 기준으로 읽힌다. 이건 우리가 서점을
+  // 다시 긁는 간격이고, 순위 자체의 기준은 아래 수집 시점 표에 서점별로 따로 있다.
+  return `우리 수집 주기 · 실시간 ${intervals.realtimeMinutes}분 / 일반 ${intervals.standardHours}시간`;
 }
 const BADGE_UPDATE_FLASH_MS = 3200;
 const WATCH_PUBLISHER_NAME = "상상스퀘어";
@@ -993,6 +996,104 @@ function syncViewNav() {
   });
 }
 
+// 시각만 짧게. 날짜가 오늘이 아니면 날짜까지 붙인다 — 일간·주간은 어제 것을 보고
+// 있을 수 있어서, "09:09"만 적으면 오늘 아침으로 읽힌다.
+function formatClock(value) {
+  if (!value) {
+    return "";
+  }
+
+  const at = new Date(value);
+
+  if (Number.isNaN(at.getTime())) {
+    return "";
+  }
+
+  const sameDay = at.toDateString() === new Date().toDateString();
+
+  return new Intl.DateTimeFormat("ko-KR", {
+    ...(sameDay ? {} : { month: "numeric", day: "numeric" }),
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(at);
+}
+
+// 상단에 우리 갱신 주기만 적혀 있으면 그 숫자가 순위의 기준인지 우리가 긁은 시각인지
+// 구분되지 않는다. 서점이 밝힌 기준 시점을 먼저 보여 주고, 우리 수집 시각은 그 뒤에
+// 부차적으로 적는다 — 사용자가 알고 싶은 것은 "이 순위가 언제 것이냐"다.
+function renderStoreStatus() {
+  const stores = (state.dashboard && state.dashboard.storeStatus) || [];
+
+  if (!elements.collectStatus) {
+    return;
+  }
+
+  if (!stores.length) {
+    elements.collectStatus.innerHTML = "";
+    return;
+  }
+
+  const cards = stores
+    .map((store) => {
+      const rows = store.groups
+        .map((group) => {
+          const basis = group.sourceStamp
+            ? `<strong class="cs-basis">${escapeHtml(group.sourceStamp)}</strong>`
+            : `<strong class="cs-basis cs-basis-unknown">서점 미표기</strong>`;
+          const cadence = group.cadence
+            ? `<span class="cs-cadence">${escapeHtml(group.cadence)}</span>`
+            : "";
+          const collected = formatClock(group.collectedAt);
+          const next = formatClock(group.nextRefreshAt);
+          const flag = group.error
+            ? '<span class="cs-flag cs-flag-error">수집 실패</span>'
+            : group.stale
+              ? '<span class="cs-flag cs-flag-stale">이전 값</span>'
+              : "";
+
+          return `
+            <tr>
+              <th scope="row">${escapeHtml(group.label)}${flag}</th>
+              <td class="cs-basis-cell">${basis}${cadence}</td>
+              <td class="cs-collected">
+                <span>${escapeHtml(collected || "-")}</span>
+                ${next ? `<span class="cs-next">다음 ${escapeHtml(next)}</span>` : ""}
+              </td>
+            </tr>
+          `;
+        })
+        .join("");
+
+      return `
+        <article class="cs-card" style="--store-accent:${escapeHtml(store.accent || "#111111")}">
+          <h2 class="cs-store">${escapeHtml(store.storeName)}</h2>
+          <table class="cs-table">
+            <thead>
+              <tr>
+                <th scope="col">구분</th>
+                <th scope="col">서점이 밝힌 순위 기준</th>
+                <th scope="col">우리 수집</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </article>
+      `;
+    })
+    .join("");
+
+  elements.collectStatus.innerHTML = `
+    <div class="cs-head">
+      <h2>데이터 수집 시점</h2>
+      <p>
+        왼쪽은 <strong>서점이 그 순위를 언제 기준으로 집계했는지</strong>,
+        오른쪽은 <strong>우리가 그것을 언제 가져왔는지</strong>입니다. 둘은 다른 값입니다.
+      </p>
+    </div>
+    <div class="cs-grid">${cards}</div>
+  `;
+}
+
 function renderDashboard() {
   if (!state.dashboard) {
     elements.dashboard.innerHTML = '<div class="panel-empty">데이터를 불러오고 있습니다.</div>';
@@ -1002,6 +1103,7 @@ function renderDashboard() {
   const visibleSections = getVisibleSections(state.dashboard.sections);
 
   elements.generatedAt.textContent = formatDateTime(state.dashboard.generatedAt);
+  renderStoreStatus();
   renderStoreFilters(state.dashboard.sections);
   elements.dashboard.innerHTML = renderDashboardSections(visibleSections);
   updateSummary();

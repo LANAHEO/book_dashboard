@@ -2219,3 +2219,168 @@ a.focus-chip:hover {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* ── 데이터 수집 시점 ───────────────────────────────────────────────
+   상단 배지는 "우리가 얼마나 자주 긁는지"만 말한다. 사용자가 알아야 하는 것은
+   "이 순위가 언제 기준이냐"이고 그건 서점마다 다르다. 둘을 한 표에 나란히 둔다. */
+.collect-status {
+  margin: 18px 0 0;
+}
+
+.cs-head h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.cs-head p {
+  margin: 4px 0 0;
+  max-width: 68ch;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.cs-head strong {
+  color: var(--muted-strong);
+  font-weight: 600;
+}
+
+.cs-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.cs-card {
+  border: 1px solid var(--line-soft);
+  border-radius: 12px;
+  padding: 14px 16px 6px;
+  background: var(--surface);
+  min-width: 0;
+}
+
+.cs-store {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* 서점 액센트는 design.md 규칙대로 칩·표식에만 쓴다. */
+.cs-store::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--store-accent, var(--ink));
+  flex: none;
+}
+
+.cs-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.cs-table thead th {
+  padding: 0 0 5px;
+  border-bottom: 1px solid var(--line-soft);
+  color: var(--stone);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-align: left;
+}
+
+.cs-table tbody th,
+.cs-table tbody td {
+  padding: 7px 0;
+  border-bottom: 1px solid var(--line-soft);
+  vertical-align: top;
+  text-align: left;
+}
+
+.cs-table tbody tr:last-child th,
+.cs-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.cs-table tbody th {
+  width: 3.6em;
+  color: var(--muted-strong);
+  font-weight: 600;
+}
+
+.cs-basis-cell {
+  padding-right: 10px;
+}
+
+.cs-basis {
+  display: block;
+  color: var(--ink);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.cs-basis-unknown {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.cs-cadence {
+  display: block;
+  margin-top: 1px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.cs-collected {
+  width: 5.6em;
+  color: var(--muted-strong);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.cs-next {
+  display: block;
+  margin-top: 1px;
+  color: var(--stone);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.cs-flag {
+  display: inline-block;
+  margin-left: 5px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.cs-flag-stale {
+  background: var(--surface-muted);
+  color: var(--muted);
+}
+
+.cs-flag-error {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+@media (max-width: 520px) {
+  .cs-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .cs-card {
+    padding: 12px 13px 4px;
+  }
+}
