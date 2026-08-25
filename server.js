@@ -5,10 +5,26 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const { URL } = require("node:url");
 
+// 환경변수 값에 BOM(U+FEFF)이나 앞뒤 공백·줄바꿈이 함께 따라오는 일이 있다. Windows에서
+// UTF-8 BOM으로 저장된 파일에서 복사해 붙여넣으면 그렇게 된다. 눈으로는 값이 멀쩡해
+// 보이는데 URL은 파싱이 깨지고, 키는 헤더에 넣는 순간
+// "Cannot convert argument to a ByteString ... value of 65279" 으로 터진다.
+// 실제로 이 배포가 그 상태였고, 값이 보이는 대로가 아니어서 원인 찾기가 오래 걸렸다.
+const UTF8_BOM = String.fromCharCode(0xfeff);
+
+function cleanEnvValue(value) {
+  const text = String(value == null ? "" : value);
+
+  return (text.startsWith(UTF8_BOM) ? text.slice(UTF8_BOM.length) : text).trim();
+}
+
 async function loadEnvFile() {
   try {
     const raw = await fs.readFile(path.join(__dirname, ".env"), "utf8");
-    for (const line of raw.split(/\r?\n/)) {
+    // BOM으로 저장된 .env는 첫 줄의 키 이름이 BOM으로 시작해 그 변수만 조용히 사라진다.
+    const body = raw.startsWith(UTF8_BOM) ? raw.slice(UTF8_BOM.length) : raw;
+
+    for (const line of body.split(/\r?\n/)) {
       const trimmed = line.trim();
       if (!trimmed || trimmed.startsWith("#")) {
         continue;
@@ -470,8 +486,8 @@ function getSourceCachePath(id) {
 }
 
 function getSupabaseConfig() {
-  const url = String(process.env.SUPABASE_URL || "").replace(/\/$/, "");
-  const key = String(process.env.SUPABASE_SERVICE_ROLE_KEY || "");
+  const url = cleanEnvValue(process.env.SUPABASE_URL).replace(/\/$/, "");
+  const key = cleanEnvValue(process.env.SUPABASE_SERVICE_ROLE_KEY);
   if (!url || !key) {
     return null;
   }
