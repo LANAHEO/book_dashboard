@@ -37,7 +37,7 @@ Book Radar는 원래 상시 실행되는 Node HTTP 서버였다. Vercel 함수�
 
 1. 리포 **Settings → Secrets and variables → Actions**
    - 시크릿 `COLLECT_SECRET`: 아무 긴 임의 문자열
-   - 변수 `DASHBOARD_BASE_URL`: 배포된 주소 (예 `https://book-radar.vercel.app`)
+   - 변수 `DASHBOARD_BASE_URL`: 배포된 주소 — 지금은 `https://book-dashboard-gilt.vercel.app`
 2. Vercel 환경변수에도 같은 값으로 `COLLECT_SECRET`을 넣는다.
 
 GitHub Actions 크론도 정시에 딱 맞지는 않는다(수 분 지연). 순위가 시간 단위로
@@ -98,6 +98,39 @@ curl -s -H "Authorization: Bearer $COLLECT_SECRET" "$BASE/api/collect?scope=all"
 ```
 
 `/api/health`의 `supabase`가 `false`면 `supabaseError`에 이유가 적혀 있다.
+
+## 겪은 고장과 원인
+
+### 전 경로 500 · FUNCTION_INVOCATION_FAILED
+
+Vercel의 서비스 감지가 `api/index.js`가 아니라 **`server.js`를 그대로 함수 진입점으로**
+잡는다(빌드 산출물 `server.cjs`). 그때 `module.exports`가 객체면 런타임 로그에
+
+```
+Invalid export found in module "/var/task/server.cjs".
+The default export must be a function or server.
+```
+
+가 찍히고 람다가 부팅조차 못 한다. 그래서 `api/index.js`의 오류 리포터가 실행될 기회가
+없어 Vercel의 일반 오류 페이지만 보인다 — 우리 코드가 돌지 않으므로 원인이 응답에
+안 나온다. `server.js`는 요청 핸들러를 **기본 내보내기**로 두고 이름 있는 내보내기는
+속성으로 남긴다.
+
+구분법: 정적 파일(`/app.js`, `/styles.css`, `/landing`)은 200인데 함수 경로는 전부
+500이고, 인증만 보는 `/api/collect`까지 죽는다면 라우팅 전에 죽은 것이다.
+
+### 화면은 뜨는데 저장이 안 됨 (`supabase: false`)
+
+`SUPABASE_URL`에 브라우저 대시보드 주소
+(`https://supabase.com/dashboard/project/<ref>`)를 넣은 경우. 그 주소는 Vercel에
+호스팅돼 있어서 `/rest/v1/...` 요청이 **Vercel의 404 HTML**로 돌아온다. 키는 멀쩡하다.
+`/api/health`가 이제 바꿀 값을 직접 알려 준다:
+
+```
+SUPABASE_URL이 대시보드 주소입니다. API 주소로 바꾸세요 → https://<ref>.supabase.co
+```
+
+`.env.bak`에 이 틀린 값이 남아 있으니 거기서 복사하지 말 것.
 
 ## 남는 것
 

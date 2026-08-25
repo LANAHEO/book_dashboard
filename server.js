@@ -513,9 +513,52 @@ let supabaseProbe = null;
 
 // getSupabaseConfig only tells us the keys are present. This asks Supabase
 // whether they actually work, so /api/health cannot report a dead link as ready.
+// SUPABASE_URL에 브라우저 대시보드 주소를 붙여넣는 실수가 가장 흔하다. 그 주소는
+// Vercel에 호스팅돼 있어서 /rest/v1/... 요청이 Supabase의 404가 아니라 Vercel의 404
+// HTML로 돌아온다. 그러면 supabaseError에 "<!DOCTYPE html ... data-dpl-id" 조각만 찍혀
+// 정작 고칠 값이 안 보인다 — 실제로 프로덕션이 그 상태였다. scripts/check-env.js가 로컬
+// .env에만 하던 검사를 돌고 있는 서버에서도 해서, /api/health가 바꿀 값을 그대로 알려 준다.
+const SUPABASE_API_HOST_SUFFIXES = [".supabase.co", ".supabase.in"];
+const SUPABASE_DASHBOARD_HOSTS = ["supabase.com", "app.supabase.com"];
+const SUPABASE_DASHBOARD_PATH = "/dashboard/project/";
+
+function describeSupabaseUrlProblem(url) {
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch (error) {
+    return `SUPABASE_URL을 URL로 읽을 수 없습니다 (${url})`;
+  }
+
+  if (SUPABASE_DASHBOARD_HOSTS.includes(parsed.host)) {
+    const at = parsed.pathname.indexOf(SUPABASE_DASHBOARD_PATH);
+    const ref =
+      at === -1
+        ? ""
+        : parsed.pathname.slice(at + SUPABASE_DASHBOARD_PATH.length).split("/")[0];
+    const hint = ref ? `https://${ref}.supabase.co` : "https://<project-ref>.supabase.co";
+
+    return `SUPABASE_URL이 대시보드 주소입니다. API 주소로 바꾸세요 → ${hint}`;
+  }
+
+  if (!SUPABASE_API_HOST_SUFFIXES.some((suffix) => parsed.host.endsWith(suffix))) {
+    return `SUPABASE_URL이 Supabase 호스트가 아닙니다 (${parsed.host})`;
+  }
+
+  return "";
+}
+
 async function probeSupabase() {
-  if (!getSupabaseConfig()) {
+  const config = getSupabaseConfig();
+  if (!config) {
     return { reachable: false, error: "not configured" };
+  }
+
+  // 형식이 틀린 주소는 쏘아 볼 필요가 없다. 응답 본문을 잘라 붙이는 대신
+  // 무엇을 어떻게 바꿔야 하는지 그대로 돌려준다.
+  const urlProblem = describeSupabaseUrlProblem(config.url);
+  if (urlProblem) {
+    return { reachable: false, error: urlProblem };
   }
 
   if (supabaseProbe && Date.now() - supabaseProbe.at < SUPABASE_PROBE_TTL_MS) {
