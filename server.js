@@ -2996,6 +2996,12 @@ function getForcedSourceIds(refreshParam) {
 const SNAPSHOT_CACHE_CONTROL =
   "public, max-age=0, s-maxage=60, stale-while-revalidate=600";
 
+// 분야 목록은 대시보드 스냅샷보다 더 오래 들고 있어도 된다. 실시간이 60분,
+// 일반이 6시간마다 수집되므로 5분은 한참 짧다. 이걸 60초로 두면 분야를 처음
+// 열 때마다 CDN이 MISS를 내고 함수까지 다녀와 1초가 걸린다.
+const LIST_CACHE_CONTROL =
+  "public, max-age=30, s-maxage=300, stale-while-revalidate=3600";
+
 function jsonResponse(response, statusCode, payload, cacheControl = "no-store") {
   response.writeHead(statusCode, {
     "content-type": "application/json; charset=utf-8",
@@ -3254,28 +3260,48 @@ async function handleRequest(request, response) {
   // 매 방문이 4~5초가 된다. 분야는 한 번에 서너 개만 보므로 그때 받아 가면 된다.
   //
   // source_snapshots 에 소스별 행이 이미 있으므로 그 한 행만 읽으면 된다.
+  // 분야 하나를 열면 서점 세 곳의 목록이 동시에 필요하다. 하나씩 부르면 왕복이
+  // 세 번이라 처음 여는 데 1.1초가 걸렸다 — ids 로 한 번에 받는다.
   if (url.pathname === "/api/list") {
-    const id = url.searchParams.get("id") || "";
+    const ids = (url.searchParams.get("ids") || url.searchParams.get("id") || "")
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean);
 
-    if (!sourceById.has(id)) {
-      jsonResponse(response, 404, { error: `알 수 없는 목록입니다: ${id}` });
+    if (!ids.length) {
+      jsonResponse(response, 400, { error: "id 또는 ids 가 필요합니다." });
       return;
     }
 
-    try {
-      const payload = await loadListForClient(id);
-      jsonResponse(response, 200, payload, SNAPSHOT_CACHE_CONTROL);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      jsonResponse(response, 200, {
-        id,
-        items: [],
-        error: `목록을 불러오지 못했습니다. ${message}`
-      });
+    // 한 번에 부를 수 있는 수를 묶어 둔다. 화면이 쓰는 건 서점 셋뿐이고,
+    // 열어 두면 응답 하나가 다시 몇 MB가 될 수 있다.
+    if (ids.length > 8) {
+      jsonResponse(response, 400, { error: "한 번에 8개까지만 요청할 수 있습니다." });
+      return;
     }
 
+    const unknown = ids.filter((id) => !sourceById.has(id));
+
+    if (unknown.length) {
+      jsonResponse(response, 404, { error: `알 수 없는 목록입니다: ${unknown.join(", ")}` });
+      return;
+    }
+
+    const lists = await Promise.all(
+      ids.map(async (id) => {
+        try {
+          return await loadListForClient(id);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          return { id, items: [], error: `목록을 불러오지 못했습니다. ${message}` };
+        }
+      })
+    );
+
+    jsonResponse(response, 200, { lists }, LIST_CACHE_CONTROL);
     return;
   }
+
 
   if (url.pathname === "/api/ranking") {
     try {
