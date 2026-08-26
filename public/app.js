@@ -1471,7 +1471,10 @@ function start() {
 
   if (bootstrap && Array.isArray(bootstrap.focusBooks)) {
     state.dashboard = bootstrap;
-    state.assetVersion = bootstrap.assetVersion || "";
+    // assetVersion 은 설정하지 않는다. 그 검사는 화면을 오래 켜 둔 채 배포가
+    // 일어났을 때를 위한 것인데, 여기서 채워 두면 첫 응답이 조금만 달라도
+    // (스냅샷과 부트스트랩이 다른 수집에서 왔을 때) 새로고침 루프가 된다.
+    // 실제로 그렇게 됐다 — 한 번 여는 동안 페이지가 6번 다시 떴다.
     state.hasLoadedOnce = true;
     renderDashboard();
     showIdleBadge();
