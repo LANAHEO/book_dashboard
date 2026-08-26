@@ -2826,3 +2826,29 @@ a.focus-chip:focus-visible {
     padding: 0 10px;
   }
 }
+
+/* 분야 항목은 따로 받아오므로 도착 전에 잠깐 이 자리가 보인다. */
+.panel-loading {
+  color: var(--muted);
+}
+
+.panel-loading::after {
+  content: "";
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-left: 8px;
+  border: 2px solid var(--line);
+  border-top-color: var(--muted);
+  border-radius: 999px;
+  vertical-align: -1px;
+  animation: panel-spin 700ms linear infinite;
+}
+
+@keyframes panel-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .panel-loading::after { animation: none; }
+}

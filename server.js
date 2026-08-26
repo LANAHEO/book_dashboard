@@ -284,6 +284,72 @@ const STORES = [
   }
 ];
 
+// 서점끼리 같은 분야를 짝지은 표. 실시간·일간·주간처럼 세 서점을 나란히 보려면
+// "이 분야"가 세 서점에서 각각 무엇인지 알아야 하는데, 서점마다 이름도 쪼갠
+// 방식도 다르다 — 교보 "시/에세이"는 예스24·알라딘에서 "에세이"이고, 교보
+// "중/고등참고서" 하나가 다른 두 서점에서는 중등·고등으로 갈린다(그래서 교보 25는
+// 두 묶음에 함께 쓴다).
+//
+// 한 서점에만 있는 분야도 버리지 않는다. 빈 칸으로 두면 그 서점 자리만 비고
+// 나머지는 그대로 보인다 — 알라딘 장르소설, 교보 한국소개도서가 그런 경우다.
+const CATEGORY_GROUPS = [
+  { key: "novel", label: "소설", kyobo: "01", yes24: "001001046", aladin: "1" },
+  { key: "essay", label: "시·에세이", kyobo: "03", yes24: "001001047", aladin: "55889" },
+  { key: "humanities", label: "인문", kyobo: "05", yes24: "001001019", aladin: "656" },
+  { key: "economy", label: "경제·경영", kyobo: "13", yes24: "001001025", aladin: "170" },
+  { key: "self", label: "자기계발", kyobo: "15", yes24: "001001026", aladin: "336" },
+  { key: "society", label: "정치·사회", kyobo: "17", yes24: "001001022", aladin: "798" },
+  { key: "history", label: "역사", kyobo: "19", yes24: "001001010", aladin: "74" },
+  { key: "religion", label: "종교", kyobo: "21", yes24: "001001021", aladin: "1237" },
+  { key: "art", label: "예술·대중문화", kyobo: "23", yes24: "001001007", aladin: "517" },
+  { key: "science", label: "과학", kyobo: "29", yes24: "001001002", aladin: "987" },
+  { key: "language", label: "외국어", kyobo: "27", yes24: "001001004", aladin: "1322" },
+  { key: "it", label: "컴퓨터·IT", kyobo: "33", yes24: "001001003", aladin: "351" },
+  { key: "travel", label: "여행", kyobo: "32", yes24: "001001009", aladin: "1196" },
+  { key: "health", label: "건강·취미", kyobo: "09", yes24: "001001011", aladin: "55890" },
+  { key: "home", label: "가정·육아", kyobo: "07", yes24: "001001001", aladin: "2030" },
+  { key: "cooking", label: "요리", kyobo: "08", yes24: "", aladin: "1230" },
+  { key: "magazine", label: "잡지", kyobo: "35", yes24: "001001024", aladin: "2913" },
+  { key: "teen", label: "청소년", kyobo: "38", yes24: "001001005", aladin: "1137" },
+  { key: "kids", label: "어린이", kyobo: "42", yes24: "001001016", aladin: "1108" },
+  { key: "baby", label: "유아", kyobo: "41", yes24: "001001027", aladin: "13789" },
+  { key: "comic", label: "만화", kyobo: "47", yes24: "001001008", aladin: "2551" },
+  { key: "exam", label: "수험서·자격증", kyobo: "31", yes24: "001001015", aladin: "1383" },
+  { key: "college", label: "대학교재", kyobo: "", yes24: "001001014", aladin: "8257" },
+  { key: "elementary", label: "초등참고서", kyobo: "39", yes24: "001001044", aladin: "50246" },
+  { key: "middle", label: "중등참고서", kyobo: "25", yes24: "001001049", aladin: "76000" },
+  { key: "high", label: "고등참고서", kyobo: "25", yes24: "001001050", aladin: "76001" },
+  { key: "sports", label: "취미·실용·스포츠", kyobo: "11", yes24: "", aladin: "" },
+  { key: "tech", label: "기술·공학", kyobo: "26", yes24: "", aladin: "" },
+  { key: "korea", label: "한국소개도서", kyobo: "53", yes24: "", aladin: "" },
+  { key: "people", label: "인물", kyobo: "", yes24: "001001020", aladin: "" },
+  { key: "collection", label: "전집", kyobo: "", yes24: "001001023", aladin: "17195" },
+  { key: "genre", label: "장르소설", kyobo: "", yes24: "", aladin: "112011" },
+  { key: "classic", label: "고전", kyobo: "", yes24: "", aladin: "2105" },
+  { key: "etc", label: "달력·기타", kyobo: "", yes24: "", aladin: "4395" }
+];
+
+// 서점 분야 코드 → 묶음 키. 한 코드가 두 묶음에 쓰일 수 있어(교보 25) 배열로 둔다.
+const CATEGORY_GROUP_BY_CODE = CATEGORY_GROUPS.reduce((map, group) => {
+  for (const storeId of ["kyobo", "yes24", "aladin"]) {
+    const code = group[storeId];
+
+    if (!code) {
+      continue;
+    }
+
+    const mapKey = `${storeId}:${code}`;
+    map[mapKey] = map[mapKey] || [];
+    map[mapKey].push(group.key);
+  }
+
+  return map;
+}, {});
+
+function categoryGroupKeys(storeId, code) {
+  return CATEGORY_GROUP_BY_CODE[`${storeId}:${code}`] || [];
+}
+
 function makeCategorySource(options) {
   const { storeId, period, categoryName, id, sourceUrl, load } = options;
   const realtime = period === "realtime";
@@ -296,6 +362,7 @@ function makeCategorySource(options) {
     categoryName,
     period,
     group: "category",
+    groupKeys: categoryGroupKeys(storeId, options.categoryCode || ""),
     realtime,
     ttlMs: realtime ? REALTIME_REFRESH_MS : STANDARD_REFRESH_MS,
     paginate: options.paginate !== false,
@@ -311,6 +378,7 @@ const KYOBO_CATEGORY_SOURCES = KYOBO_CATEGORIES.flatMap((category) => [
     storeId: "kyobo",
     period: "realtime",
     categoryName: category.name,
+    categoryCode: category.code,
     id: `kyobo-realtime-${category.code}`,
     sourceUrl: "https://store.kyobobook.co.kr/bestseller/realtime",
     paginate: false,
@@ -322,6 +390,7 @@ const KYOBO_CATEGORY_SOURCES = KYOBO_CATEGORIES.flatMap((category) => [
     storeId: "kyobo",
     period: "daily",
     categoryName: category.name,
+    categoryCode: category.code,
     id: `kyobo-daily-${category.code}`,
     sourceUrl: `https://store.kyobobook.co.kr/bestseller/online/daily/domestic/${category.code}`,
     load: () => fetchKyoboCategoryList("001", category.code)
@@ -330,6 +399,7 @@ const KYOBO_CATEGORY_SOURCES = KYOBO_CATEGORIES.flatMap((category) => [
     storeId: "kyobo",
     period: "weekly",
     categoryName: category.name,
+    categoryCode: category.code,
     id: `kyobo-weekly-${category.code}`,
     sourceUrl: `https://store.kyobobook.co.kr/bestseller/online/weekly/domestic/${category.code}`,
     load: () => fetchKyoboCategoryList("002", category.code)
@@ -344,6 +414,7 @@ const YES24_CATEGORY_SOURCES = YES24_CATEGORIES.flatMap((category) =>
       storeId: "yes24",
       period,
       categoryName: category.name,
+      categoryCode: category.categoryNumber,
       id: `yes24-${period}-${category.categoryNumber}`,
       sourceUrl,
       load: () =>
@@ -374,6 +445,7 @@ const ALADIN_CATEGORY_SOURCES = ALADIN_CATEGORIES.flatMap((category) =>
       storeId: "aladin",
       period,
       categoryName: category.name,
+      categoryCode: category.cid,
       id: `aladin-${period}-${category.cid}`,
       sourceUrl,
       load: () =>
@@ -2197,6 +2269,8 @@ function buildPayload(definition, result, options = {}) {
     typeLabel: definition.typeLabel,
     group: definition.group || (definition.realtime ? "overall-realtime" : "standard"),
     categoryName: definition.categoryName || "",
+    // 서점끼리 같은 분야를 짝지어 나란히 보여 주려면 화면도 이 키를 알아야 한다.
+    groupKeys: definition.groupKeys || [],
     period: definition.period || "",
     periodLabel: definition.period ? PERIOD_LABELS[definition.period] : "",
     realtime: definition.realtime,
@@ -2346,6 +2420,30 @@ function buildFocusBooks(sections, catalog = []) {
     });
 }
 
+// 화면이 분야 하나를 열 때 쓰는 경로. 메모리 캐시 → 저장된 스냅샷 순으로 보고,
+// 둘 다 없을 때만 서점을 새로 긁는다. 서버리스는 요청마다 프로세스가 새로 뜨므로
+// 저장된 스냅샷을 먼저 보지 않으면 분야를 누를 때마다 서점을 다시 긁게 된다.
+async function loadListForClient(id) {
+  const cached = cache.get(id);
+  const now = Date.now();
+
+  if (cached && cached.expiresAt > now) {
+    return { ...cached.payload, cacheState: "hit" };
+  }
+
+  const persisted = await readPersistedSource(id);
+
+  if (persisted) {
+    cache.set(id, persisted);
+    return {
+      ...persisted.payload,
+      cacheState: persisted.expiresAt > now ? "persisted" : "persisted-stale"
+    };
+  }
+
+  return loadSource(id);
+}
+
 async function loadSource(id, options = {}) {
   const definition = sourceById.get(id);
 
@@ -2456,6 +2554,27 @@ function buildStoreStatus(sections) {
   });
 }
 
+// 분야별 목록은 항목을 빼고 내려보낸다. 화면은 지금 보고 있는 분야만 필요하고,
+// 그건 /api/list 가 따로 준다. 항목을 다 담으면 분야별만 7.8MB(응답의 95%)라
+// 응답이 10MB를 넘겨 Vercel CDN이 캐시를 포기하고 매 방문이 4~5초가 된다.
+//
+// 상상스퀘어 추적은 여기서 항목을 빼기 전에 이미 끝나 있다(buildFocusBooks) —
+// 그래서 100위까지 훑는 정확도는 그대로다.
+function stripCategoryItems(sections) {
+  return sections.map((section) => ({
+    ...section,
+    lists: section.lists.map((list) => {
+      if (list.group !== "category") {
+        return list;
+      }
+
+      const { items, ...rest } = list;
+
+      return { ...rest, items: [], itemsDeferred: true };
+    })
+  }));
+}
+
 async function buildDashboard(forceIds = []) {
   const [lists, catalog] = await Promise.all([
     Promise.all(
@@ -2489,9 +2608,10 @@ async function buildDashboard(forceIds = []) {
   const payload = {
     generatedAt,
     assetVersion: await getAssetVersion(),
-    sections,
+    sections: stripCategoryItems(sections),
     focusBooks,
     storeStatus: buildStoreStatus(sections),
+    categoryGroups: CATEGORY_GROUPS.map(({ key, label }) => ({ key, label })),
     deltaBaselineAt: historyBaseline,
     // 화면이 수집 주기를 직접 적어 두면 서버 값을 바꿀 때 같이 안 고쳐져 거짓말이 된다.
     // 실제로 그런 일이 있었다 — 배지가 "실시간 5분 / 일반 10분"으로 남아 있었다.
@@ -3126,6 +3246,34 @@ async function handleRequest(request, response) {
 
     const payload = await loadSource(id, { force });
     jsonResponse(response, 200, payload);
+    return;
+  }
+
+  // 분야별 목록 하나를 따로 준다. 대시보드 응답에는 분야별 항목을 담지 않는다 —
+  // 서점 전체 분야(84종)를 담으면 응답이 10MB를 넘겨 Vercel CDN이 캐시를 포기하고
+  // 매 방문이 4~5초가 된다. 분야는 한 번에 서너 개만 보므로 그때 받아 가면 된다.
+  //
+  // source_snapshots 에 소스별 행이 이미 있으므로 그 한 행만 읽으면 된다.
+  if (url.pathname === "/api/list") {
+    const id = url.searchParams.get("id") || "";
+
+    if (!sourceById.has(id)) {
+      jsonResponse(response, 404, { error: `알 수 없는 목록입니다: ${id}` });
+      return;
+    }
+
+    try {
+      const payload = await loadListForClient(id);
+      jsonResponse(response, 200, payload, SNAPSHOT_CACHE_CONTROL);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      jsonResponse(response, 200, {
+        id,
+        items: [],
+        error: `목록을 불러오지 못했습니다. ${message}`
+      });
+    }
+
     return;
   }
 

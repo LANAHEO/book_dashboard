@@ -8,10 +8,10 @@ const state = {
   refreshTimer: null,
   badgeResetTimer: null,
   hasLoadedOnce: false,
-  mobileRealtimeStore: "kyobo",
-  categoryStore: "yes24",
+  mobileRealtimeStore: "kyobo",
   categoryPeriod: "realtime",
-  categoryListByStore: {},
+  // 분야는 서점을 가로지르는 묶음 키로 고른다(예: "economy").
+  categoryGroup: "",
   rankPages: {},
   // null이면 화면 폭으로 정하고, 사용자가 한 번이라도 여닫으면 그 값을 따른다.
   collectStatusOpen: null
@@ -361,8 +361,10 @@ function renderCard(list) {
         ? `<p class="panel-note panel-note-info">${escapeHtml(list.note)}</p>`
         : "";
 
-  const content =
-    items.length > 0
+  // 분야별 목록은 항목을 따로 받아오므로, 도착 전에는 비었다고 하면 안 된다.
+  const content = list.pendingItems
+    ? '<div class="panel-empty panel-loading">순위를 불러오는 중입니다.</div>'
+    : items.length > 0
       ? `<ol class="rank-list">${items.map(renderItem).join("")}</ol>`
       : '<div class="panel-empty">현재 검색어와 일치하는 책이 없습니다.</div>';
   const countLabel = state.search
@@ -827,10 +829,6 @@ function renderRealtimeBoard(lists) {
   `;
 }
 
-function getCategoryListKey(storeId, period) {
-  return `${storeId}:${period}`;
-}
-
 function renderCategoryPeriodSwitcher(lists, accent) {
   const available = CATEGORY_PERIODS.filter((period) =>
     lists.some((list) => list.period === period.key)
@@ -858,6 +856,64 @@ function renderCategoryPeriodSwitcher(lists, accent) {
   `;
 }
 
+// 분야별 항목은 대시보드 응답에 없다(서점 전체 분야를 담으면 10MB를 넘겨 CDN 캐시가
+// 꺼진다). 지금 보고 있는 분야 세 개만 /api/list 로 받아 두고 재사용한다.
+const loadedLists = new Map();
+const loadingLists = new Set();
+
+function requestListItems(id) {
+  if (loadedLists.has(id) || loadingLists.has(id)) {
+    return;
+  }
+
+  loadingLists.add(id);
+
+  fetch(`/api/list?id=${encodeURIComponent(id)}`)
+    .then((response) => response.json())
+    .then((payload) => {
+      loadedLists.set(id, payload);
+    })
+    .catch((error) => {
+      loadedLists.set(id, { items: [], error: `목록을 불러오지 못했습니다. ${error.message}` });
+    })
+    .finally(() => {
+      loadingLists.delete(id);
+      renderDashboard();
+    });
+}
+
+// 항목이 아직 없는 목록은 받아오기 시작하고, 그 사이에는 불러오는 중으로 그린다.
+function withLoadedItems(list) {
+  if (!list.itemsDeferred) {
+    return list;
+  }
+
+  const loaded = loadedLists.get(list.id);
+
+  if (!loaded) {
+    requestListItems(list.id);
+    return { ...list, pendingItems: true };
+  }
+
+  return { ...list, items: loaded.items || [], error: loaded.error || list.error };
+}
+
+function categoryGroupsWithLists(lists) {
+  const groups = (state.dashboard && state.dashboard.categoryGroups) || [];
+  const available = new Set();
+
+  for (const list of lists) {
+    for (const key of list.groupKeys || []) {
+      available.add(key);
+    }
+  }
+
+  return groups.filter((group) => available.has(group.key));
+}
+
+// 실시간·일간·주간 화면과 같은 구성으로 그린다. 분야를 하나 고르면 그 분야의
+// 세 서점 순위가 나란히 선다 — 서점을 바꿔 가며 볼 필요가 없다.
+// 한 서점에만 있는 분야는 그 서점 칸만 선다(예: 알라딘 장르소설).
 function renderCategoryBoard(lists) {
   if (!lists.length) {
     return `
@@ -874,40 +930,43 @@ function renderCategoryBoard(lists) {
     `;
   }
 
-  const storeLists = STORE_ALERT_ORDER
-    .map((storeId) => lists.find((list) => list.storeId === storeId))
-    .filter(Boolean);
+  const groups = categoryGroupsWithLists(lists);
 
-  if (!storeLists.some((list) => list.storeId === state.categoryStore)) {
-    state.categoryStore = storeLists[0].storeId;
+  if (!groups.length) {
+    return "";
   }
 
-  const storeScopedLists = lists.filter((list) => list.storeId === state.categoryStore);
-
-  if (!storeScopedLists.some((list) => list.period === state.categoryPeriod)) {
-    state.categoryPeriod = storeScopedLists[0].period;
+  if (!groups.some((group) => group.key === state.categoryGroup)) {
+    state.categoryGroup = groups[0].key;
   }
 
-  const activeLists = storeScopedLists.filter(
-    (list) => list.period === state.categoryPeriod
+  const groupLists = lists.filter((list) =>
+    (list.groupKeys || []).includes(state.categoryGroup)
   );
-  const listKey = getCategoryListKey(state.categoryStore, state.categoryPeriod);
-  let selectedListId = state.categoryListByStore[listKey];
 
-  if (!activeLists.some((list) => list.id === selectedListId)) {
-    selectedListId = activeLists[0].id;
-    state.categoryListByStore[listKey] = selectedListId;
+  // 기간은 이 분야에 실제로 있는 것만 고른다. 서점이 안 내주는 조합이 있어서
+  // (알라딘 장르소설 실시간처럼) 전체 기준으로 고르면 빈 화면이 된다.
+  const periods = CATEGORY_PERIODS.filter((period) =>
+    groupLists.some((list) => list.period === period.key)
+  );
+
+  if (!periods.length) {
+    return "";
   }
 
-  const selectedIndex = activeLists.findIndex((list) => list.id === selectedListId);
-  const selectedList = activeLists[selectedIndex];
-  const categoryCountByStore = lists.reduce((counts, list) => {
-    if (list.period === state.categoryPeriod) {
-      counts[list.storeId] = (counts[list.storeId] || 0) + 1;
-    }
+  if (!periods.some((period) => period.key === state.categoryPeriod)) {
+    state.categoryPeriod = periods[0].key;
+  }
 
-    return counts;
-  }, {});
+  const activeLists = sortByStoreOrder(
+    groupLists.filter((list) => list.period === state.categoryPeriod)
+  ).map(withLoadedItems);
+
+  const activeGroup = groups.find((group) => group.key === state.categoryGroup);
+  const totalCollected = activeLists.reduce((sum, list) => sum + (list.itemCount || 0), 0);
+  const storeNote = activeLists.length < 3
+    ? `이 분야는 ${activeLists.map((list) => list.storeName).join("·")}에만 있습니다.`
+    : "";
 
   return `
     <section class="section-block category-board" id="category-rankings">
@@ -915,41 +974,32 @@ function renderCategoryBoard(lists) {
         <div>
           <div class="section-label">Categories</div>
           <h2>분야별 순위</h2>
-          <p>서점과 기간을 고르고 분야를 순서대로 넘겨보세요.</p>
+          <p>분야를 고르면 세 서점 순위가 나란히 섭니다.${storeNote ? " " + escapeHtml(storeNote) : ""}</p>
         </div>
-        <span class="section-count">${escapeHtml(selectedIndex + 1)} / ${escapeHtml(activeLists.length)}</span>
+        <div class="realtime-total">
+          <strong>${escapeHtml(totalCollected)}</strong>
+          <span>권 수집</span>
+        </div>
       </div>
-      ${renderStoreSwitcher(
-        storeLists,
-        state.categoryStore,
-        "data-category-store",
-        "분야별 순위 서점 선택",
-        (list) => `${categoryCountByStore[list.storeId] || 0}개 분야`
-      )}
-      ${renderCategoryPeriodSwitcher(storeScopedLists, selectedList.accent)}
+      ${renderCategoryPeriodSwitcher(groupLists, activeLists[0] && activeLists[0].accent)}
       <div class="category-selector" aria-label="분야 선택">
-        ${activeLists
+        ${groups
           .map(
-            (list) => `
+            (group) => `
               <button
                 type="button"
-                class="category-selector-button ${selectedList.id === list.id ? "active" : ""}"
-                data-category-list="${escapeHtml(list.id)}"
-                aria-pressed="${selectedList.id === list.id ? "true" : "false"}"
+                class="category-selector-button ${group.key === state.categoryGroup ? "active" : ""}"
+                data-category-group="${escapeHtml(group.key)}"
+                aria-pressed="${group.key === state.categoryGroup ? "true" : "false"}"
               >
-                ${escapeHtml(list.categoryName || list.name)}
+                ${escapeHtml(group.label)}
               </button>
             `
           )
           .join("")}
       </div>
-      <div class="category-stage">
-        <div class="category-stepper">
-          <button type="button" data-category-step="-1" ${selectedIndex === 0 ? "disabled" : ""}>이전 분야</button>
-          <strong>${escapeHtml(selectedList.categoryName || selectedList.name)}</strong>
-          <button type="button" data-category-step="1" ${selectedIndex === activeLists.length - 1 ? "disabled" : ""}>다음 분야</button>
-        </div>
-        ${renderCard(selectedList)}
+      <div class="standard-grid">
+        ${activeLists.map(renderCard).join("")}
       </div>
     </section>
   `;
@@ -1325,13 +1375,6 @@ function bindEvents() {
       return;
     }
 
-    const categoryStoreButton = event.target.closest("[data-category-store]");
-    if (categoryStoreButton) {
-      state.categoryStore = categoryStoreButton.dataset.categoryStore;
-      renderDashboard();
-      return;
-    }
-
     const categoryPeriodButton = event.target.closest("[data-category-period]");
     if (categoryPeriodButton) {
       state.categoryPeriod = categoryPeriodButton.dataset.categoryPeriod;
@@ -1339,42 +1382,12 @@ function bindEvents() {
       return;
     }
 
-    const listKey = getCategoryListKey(state.categoryStore, state.categoryPeriod);
-
-    const categoryListButton = event.target.closest("[data-category-list]");
-    if (categoryListButton) {
-      state.categoryListByStore[listKey] = categoryListButton.dataset.categoryList;
+    // 분야는 서점별 목록이 아니라 서점을 가로지르는 묶음으로 고른다.
+    const categoryGroupButton = event.target.closest("[data-category-group]");
+    if (categoryGroupButton) {
+      state.categoryGroup = categoryGroupButton.dataset.categoryGroup;
       renderDashboard();
       return;
-    }
-
-    const categoryStepButton = event.target.closest("[data-category-step]");
-    if (categoryStepButton) {
-      const lists = flattenLists(
-        getVisibleSections(state.dashboard.sections)
-      ).filter(
-        (list) =>
-          list.group === "category" &&
-          list.storeId === state.categoryStore &&
-          list.period === state.categoryPeriod
-      );
-      const selectedId = state.categoryListByStore[listKey];
-      const currentIndex = Math.max(
-        0,
-        lists.findIndex((list) => list.id === selectedId)
-      );
-      const nextIndex = Math.min(
-        Math.max(
-          currentIndex + Number(categoryStepButton.dataset.categoryStep),
-          0
-        ),
-        lists.length - 1
-      );
-
-      if (lists[nextIndex]) {
-        state.categoryListByStore[listKey] = lists[nextIndex].id;
-        renderDashboard();
-      }
     }
   });
 }
