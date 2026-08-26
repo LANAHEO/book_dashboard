@@ -805,6 +805,64 @@ async function readSupabaseSource(id) {
   };
 }
 
+// 첫 화면(상상스퀘어)은 전체 640KB 중 70KB만 쓴다. 나머지는 다른 탭 것이다.
+// 그 70KB만 따로 저장해 두고 HTML에 실어 보내면, 페이지가 뜨는 순간 이미
+// 데이터가 있어서 API 왕복을 기다리지 않는다.
+const BOOTSTRAP_SNAPSHOT_ID = "bootstrap";
+
+function buildBootstrapPayload(payload) {
+  return {
+    generatedAt: payload.generatedAt,
+    assetVersion: payload.assetVersion,
+    deltaBaselineAt: payload.deltaBaselineAt,
+    collectIntervals: payload.collectIntervals,
+    storeStatus: payload.storeStatus,
+    categoryGroups: payload.categoryGroups,
+    focusBooks: payload.focusBooks,
+    // 서점 칩을 그리려면 서점 자체는 있어야 한다. 목록은 전체 응답이 채운다.
+    sections: (payload.sections || []).map((section) => ({ ...section, lists: [] })),
+    partial: true
+  };
+}
+
+async function writeBootstrapSnapshot(payload) {
+  if (!getSupabaseConfig()) {
+    return;
+  }
+
+  try {
+    await supabaseRequest("dashboard_snapshots?on_conflict=id", {
+      method: "POST",
+      headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+      body: JSON.stringify({
+        id: BOOTSTRAP_SNAPSHOT_ID,
+        payload: buildBootstrapPayload(payload),
+        updated_at: new Date().toISOString()
+      })
+    });
+  } catch (error) {
+    // 첫 화면 최적화가 실패해도 대시보드 자체는 그대로 돌아야 한다.
+    console.error("[supabase] failed to persist bootstrap snapshot:", error);
+  }
+}
+
+async function readBootstrapSnapshot() {
+  if (!getSupabaseConfig()) {
+    return null;
+  }
+
+  try {
+    const rows = await supabaseRequest(
+      `dashboard_snapshots?id=eq.${encodeURIComponent(BOOTSTRAP_SNAPSHOT_ID)}&select=payload&limit=1`
+    );
+
+    return (Array.isArray(rows) && rows[0] && rows[0].payload) || null;
+  } catch (error) {
+    console.error("[supabase] bootstrap read failed:", error);
+    return null;
+  }
+}
+
 async function writeDashboardSnapshot(payload) {
   if (!FILE_CACHE_ENABLED) {
     return;
@@ -2623,6 +2681,7 @@ async function buildDashboard(forceIds = []) {
 
   try {
     await writeDashboardSnapshot(payload);
+    await writeBootstrapSnapshot(payload);
   } catch (error) {
     console.error("[supabase] failed to persist dashboard snapshot:", error);
   }
@@ -3052,6 +3111,48 @@ async function getAssetVersion() {
   return stamps.join("|");
 }
 
+// 스크립트 태그 안에 JSON을 넣을 때는 </script> 와 유니코드 줄 구분자를 막아야
+// 문서가 그 자리에서 끊긴다.
+function inlineJson(value) {
+  // 스크립트 태그 안의 JSON은 </script> 와 U+2028/U+2029 에서 문서가 끊긴다.
+  return JSON.stringify(value).replace(/[<\u2028\u2029]/g, (ch) =>
+    ch === "<" ? "\\u003c" : "\\u" + ch.charCodeAt(0).toString(16)
+  );
+}
+
+async function serveDashboardPage(response) {
+  let html;
+
+  try {
+    html = await fs.readFile(path.join(PUBLIC_DIR, "index.html"), "utf8");
+  } catch (error) {
+    jsonResponse(response, 404, { error: "Not found" });
+    return;
+  }
+
+  let bootstrap = null;
+
+  try {
+    bootstrap = await readBootstrapSnapshot();
+  } catch (error) {
+    // 데이터를 못 실어도 화면은 떠야 한다 — 그때는 예전처럼 API로 받아 온다.
+    bootstrap = null;
+  }
+
+  if (bootstrap) {
+    html = html.replace(
+      "</head>",
+      `<script>window.__BOOTSTRAP__ = ${inlineJson(bootstrap)};</script></head>`
+    );
+  }
+
+  response.writeHead(200, {
+    "content-type": "text/html; charset=utf-8",
+    "cache-control": SNAPSHOT_CACHE_CONTROL
+  });
+  response.end(html);
+}
+
 async function serveStatic(response, requestPath) {
   let normalizedPath = requestPath;
 
@@ -3422,6 +3523,14 @@ async function handleRequest(request, response) {
         standardHours: STANDARD_REFRESH_MS / 3600000
       }
     });
+    return;
+  }
+
+  // 대시보드 화면은 데이터를 HTML에 실어 보낸다. 그러면 페이지가 뜨는 순간
+  // 이미 첫 화면을 그릴 수 있어서 /api/dashboard 왕복(캐시가 비면 2~2.6초)을
+  // 기다리지 않는다. 나머지 탭에 필요한 전체 데이터는 뒤에서 따로 받는다.
+  if (url.pathname === "/" || url.pathname === "/main" || url.pathname === "/main/") {
+    await serveDashboardPage(response);
     return;
   }
 

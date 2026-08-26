@@ -1463,4 +1463,21 @@ removeAddressHash();
 window.addEventListener("hashchange", removeAddressHash);
 bindEvents();
 showIdleBadge();
-loadDashboard();
+// 서버가 첫 화면 데이터를 HTML에 실어 보낸다(window.__BOOTSTRAP__).
+// 있으면 그걸로 곧바로 그리고, 나머지 탭에 필요한 전체 데이터는 뒤에서 받는다.
+// 없으면(저장이 아직 없거나 실패) 예전처럼 API부터 기다린다.
+function start() {
+  const bootstrap = window.__BOOTSTRAP__;
+
+  if (bootstrap && Array.isArray(bootstrap.focusBooks)) {
+    state.dashboard = bootstrap;
+    state.assetVersion = bootstrap.assetVersion || "";
+    state.hasLoadedOnce = true;
+    renderDashboard();
+    showIdleBadge();
+  }
+
+  loadDashboard();
+}
+
+start();
