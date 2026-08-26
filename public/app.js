@@ -859,21 +859,23 @@ function renderCategoryPeriodSwitcher(lists, accent) {
 // 분야별 항목은 대시보드 응답에 없다(서점 전체 분야를 담으면 10MB를 넘겨 CDN 캐시가
 // 꺼진다). 지금 보고 있는 분야 세 개만 /api/list 로 받아 두고 재사용한다.
 const loadedLists = new Map();
-const loadingLists = new Set();
+// 분야+기간 단위로 받는다. 같은 주소를 두 번 부르지 않기 위한 표시.
+const loadingGroups = new Set();
+const failedGroups = new Map();
 
-// 분야를 하나 열면 서점 세 곳이 동시에 필요하다. 하나씩 부르면 왕복이 세 번이고
-// 도착할 때마다 화면을 다시 그려서 처음 여는 데 1.1초가 걸렸다.
-// 한 번에 묶어 부르고, 다 온 뒤 한 번만 다시 그린다.
-function requestLists(ids) {
-  const missing = ids.filter((id) => !loadedLists.has(id) && !loadingLists.has(id));
+// 캐시에 얹히느냐가 전부다 — CDN MISS는 1.2~1.4초, HIT는 13~31ms다.
+// 그래서 주소를 분야+기간으로 고정한다. 34분야 × 3기간 = 102개뿐이라
+// 누군가 한 번 열면 그 뒤로는 모두가 캐시를 쓴다.
+function requestGroup(groupKey, period) {
+  const token = `${groupKey}:${period}`;
 
-  if (!missing.length) {
+  if (loadingGroups.has(token)) {
     return;
   }
 
-  missing.forEach((id) => loadingLists.add(id));
+  loadingGroups.add(token);
 
-  fetch(`/api/list?ids=${encodeURIComponent(missing.join(","))}`)
+  fetch(`/api/list?group=${encodeURIComponent(groupKey)}&period=${encodeURIComponent(period)}`)
     .then((response) => response.json())
     .then((payload) => {
       for (const list of payload.lists || []) {
@@ -881,31 +883,16 @@ function requestLists(ids) {
           loadedLists.set(list.id, list);
         }
       }
-
-      // 응답에 빠진 것이 있으면 계속 불러오는 중으로 남지 않게 표시해 둔다.
-      for (const id of missing) {
-        if (!loadedLists.has(id)) {
-          loadedLists.set(id, { id, items: [], error: "목록을 불러오지 못했습니다." });
-        }
-      }
     })
     .catch((error) => {
-      for (const id of missing) {
-        loadedLists.set(id, {
-          id,
-          items: [],
-          error: `목록을 불러오지 못했습니다. ${error.message}`
-        });
-      }
+      // 표시를 지우면 다시 그리기 → 다시 요청 → 또 실패로 맴돈다.
+      // 실패한 목록에 오류를 심어 두고 그 자리에 사유가 보이게 한다.
+      failedGroups.set(token, `목록을 불러오지 못했습니다. ${error.message}`);
     })
     .finally(() => {
-      missing.forEach((id) => loadingLists.delete(id));
       renderDashboard();
     });
 }
-
-// 화면이 필요로 하는 목록을 한 번에 모아 부르기 위해, 렌더 중에는 모으기만 한다.
-let pendingListIds = [];
 
 function withLoadedItems(list) {
   if (!list.itemsDeferred) {
@@ -915,28 +902,17 @@ function withLoadedItems(list) {
   const loaded = loadedLists.get(list.id);
 
   if (!loaded) {
-    pendingListIds.push(list.id);
+    const groupKey = (list.groupKeys || [])[0] || "";
+    const failure = failedGroups.get(`${groupKey}:${list.period}`);
+
+    if (failure) {
+      return { ...list, error: failure };
+    }
+
     return { ...list, pendingItems: true };
   }
 
   return { ...list, items: loaded.items || [], error: loaded.error || list.error };
-}
-
-// 렌더가 끝난 뒤 한 번만 호출한다. 사용자가 곧 볼 만한 이웃 분야도 같이 당겨 둔다.
-function flushPendingLists(neighbourIds) {
-  const ids = pendingListIds;
-  pendingListIds = [];
-
-  if (ids.length) {
-    requestLists(ids);
-    return;
-  }
-
-  // 지금 보는 분야가 다 차 있을 때만 이웃을 미리 받는다 — 눈앞의 것이 먼저다.
-  if (neighbourIds && neighbourIds.length) {
-    const idle = window.requestIdleCallback || ((fn) => window.setTimeout(fn, 400));
-    idle(() => requestLists(neighbourIds.slice(0, 6)));
-  }
 }
 
 function categoryGroupsWithLists(lists) {
@@ -1002,24 +978,24 @@ function renderCategoryBoard(lists) {
   const activeLists = sortByStoreOrder(
     groupLists.filter((list) => list.period === state.categoryPeriod)
   ).map(withLoadedItems);
+
+  // 지금 분야를 받아 두고, 좌우 이웃도 한가할 때 미리 당긴다.
+  // 분야는 좌우로 훑어 보는 자리라 다음에 누를 것이 대개 옆에 있다.
+  if (activeLists.some((list) => list.pendingItems)) {
+    requestGroup(state.categoryGroup, state.categoryPeriod);
+  } else {
+    const idle = window.requestIdleCallback || ((fn) => window.setTimeout(fn, 300));
+    const groupIndex = groups.findIndex((group) => group.key === state.categoryGroup);
+    const neighbours = [1, -1, 2, -2]
+      .map((offset) => groups[groupIndex + offset])
+      .filter(Boolean);
 
-  // 지금 분야가 다 차 있으면, 바로 옆 분야를 미리 받아 둔다. 분야는 좌우로
-  // 훑어 보는 자리라 다음에 누를 것이 대개 옆에 있다.
-  const groupIndex = groups.findIndex((group) => group.key === state.categoryGroup);
-  const neighbourIds = [groups[groupIndex + 1], groups[groupIndex - 1]]
-    .filter(Boolean)
-    .flatMap((group) =>
-      lists
-        .filter(
-          (list) =>
-            (list.groupKeys || []).includes(group.key) &&
-            list.period === state.categoryPeriod &&
-            list.itemsDeferred
-        )
-        .map((list) => list.id)
-    );
-
-  flushPendingLists(neighbourIds);
+    idle(() => {
+      for (const group of neighbours) {
+        requestGroup(group.key, state.categoryPeriod);
+      }
+    });
+  }
 
   const activeGroup = groups.find((group) => group.key === state.categoryGroup);
   const totalCollected = activeLists.reduce((sum, list) => sum + (list.itemCount || 0), 0);

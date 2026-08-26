@@ -3262,28 +3262,36 @@ async function handleRequest(request, response) {
   // source_snapshots 에 소스별 행이 이미 있으므로 그 한 행만 읽으면 된다.
   // 분야 하나를 열면 서점 세 곳의 목록이 동시에 필요하다. 하나씩 부르면 왕복이
   // 세 번이라 처음 여는 데 1.1초가 걸렸다 — ids 로 한 번에 받는다.
+  // 분야 하나를 열면 서점 세 곳이 한꺼번에 필요하다.
+  //
+  // 캐시에 얹히느냐가 전부다 — 실측으로 CDN MISS는 1.2~1.4초(함수 기동 비용이
+  // 대부분이라 목록을 1개 받든 8개 받든 비슷하다), HIT는 13~31ms다.
+  // 그래서 주소를 id 조합이 아니라 분야+기간으로 받는다. id 조합은 부르는 쪽에
+  // 따라 달라져 캐시 키가 흩어지지만, 분야+기간은 34×3으로 고정이라 한 번
+  // 데워지면 모두가 그 캐시를 쓴다.
   if (url.pathname === "/api/list") {
-    const ids = (url.searchParams.get("ids") || url.searchParams.get("id") || "")
-      .split(",")
-      .map((value) => value.trim())
-      .filter(Boolean);
+    const groupKey = url.searchParams.get("group") || "";
+    const period = url.searchParams.get("period") || "";
+
+    if (!groupKey || !period) {
+      jsonResponse(response, 400, { error: "group 과 period 가 필요합니다." });
+      return;
+    }
+
+    const ids = SOURCES.filter(
+      (source) =>
+        source.group === "category" &&
+        source.period === period &&
+        (source.groupKeys || []).includes(groupKey)
+    ).map((source) => source.id);
 
     if (!ids.length) {
-      jsonResponse(response, 400, { error: "id 또는 ids 가 필요합니다." });
-      return;
-    }
-
-    // 한 번에 부를 수 있는 수를 묶어 둔다. 화면이 쓰는 건 서점 셋뿐이고,
-    // 열어 두면 응답 하나가 다시 몇 MB가 될 수 있다.
-    if (ids.length > 8) {
-      jsonResponse(response, 400, { error: "한 번에 8개까지만 요청할 수 있습니다." });
-      return;
-    }
-
-    const unknown = ids.filter((id) => !sourceById.has(id));
-
-    if (unknown.length) {
-      jsonResponse(response, 404, { error: `알 수 없는 목록입니다: ${unknown.join(", ")}` });
+      jsonResponse(
+        response,
+        404,
+        { error: `그런 분야·기간이 없습니다: ${groupKey}/${period}` },
+        LIST_CACHE_CONTROL
+      );
       return;
     }
 
@@ -3301,6 +3309,7 @@ async function handleRequest(request, response) {
     jsonResponse(response, 200, { lists }, LIST_CACHE_CONTROL);
     return;
   }
+
 
 
   if (url.pathname === "/api/ranking") {
