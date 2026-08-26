@@ -156,31 +156,109 @@ const FOCUS_CATALOG_RETRY_MS = 10 * 60 * 1000;
 
 // 일간·주간은 분야 코드로 직접 조회하지만, 교보문고는 분야별 실시간을 제공하지
 // 않아 실시간만 전체 TOP 100을 분류 코드 앞 두 자리로 나눠서 만든다.
+// 교보 베스트셀러 페이지(국내도서)의 분야 선택기를 그대로 옮긴 것이다. 27개.
+// 코드는 /bestseller/online/{period}/domestic/{code} 경로에 들어가는 값이고,
+// 화면의 분야를 하나씩 눌러 URL에서 읽어 확인했다. 이름도 그 페이지 표기 그대로다.
+// 서점이 분야를 바꾸면 여기도 바뀌어야 한다 — 확인은 그 페이지에서 한다.
 const KYOBO_CATEGORIES = [
+  { name: "소설", code: "01" },
+  { name: "시/에세이", code: "03" },
+  { name: "인문", code: "05" },
+  { name: "가정/육아", code: "07" },
+  { name: "요리", code: "08" },
+  { name: "건강", code: "09" },
+  { name: "취미/실용/스포츠", code: "11" },
   { name: "경제/경영", code: "13" },
   { name: "자기계발", code: "15" },
-  { name: "인문", code: "05" },
-  { name: "시/에세이", code: "03" },
-  { name: "소설", code: "01" }
+  { name: "정치/사회", code: "17" },
+  { name: "역사/문화", code: "19" },
+  { name: "종교", code: "21" },
+  { name: "예술/대중문화", code: "23" },
+  { name: "중/고등참고서", code: "25" },
+  { name: "기술/공학", code: "26" },
+  { name: "외국어", code: "27" },
+  { name: "과학", code: "29" },
+  { name: "취업/수험서", code: "31" },
+  { name: "여행", code: "32" },
+  { name: "컴퓨터/IT", code: "33" },
+  { name: "잡지", code: "35" },
+  { name: "청소년", code: "38" },
+  { name: "초등참고서", code: "39" },
+  { name: "유아(0~7세)", code: "41" },
+  { name: "어린이(초등)", code: "42" },
+  { name: "만화", code: "47" },
+  { name: "한국소개도서", code: "53" }
 ];
 const KYOBO_CATEGORY_NOTE =
   "교보문고는 분야별 실시간 순위를 제공하지 않습니다. 전체 실시간 TOP 100에 든 책을 분야로 나눈 목록이며, 순위는 종합 순위 기준입니다.";
 const KYOBO_REALTIME_SNAPSHOT_TTL_MS = 60 * 1000;
 
+// 예스24 국내도서 분야 27개. categoryNumber는 베스트셀러 페이지의
+// Product/Category/Display/001001XXX 링크에서 읽었고, 이름도 그 표기 그대로다
+// (예: "경제 경영" — 붙여 쓰지 않는다).
 const YES24_CATEGORIES = [
-  { name: "경제경영", categoryNumber: "001001025" },
-  { name: "자기계발", categoryNumber: "001001026" },
+  { name: "가정 살림", categoryNumber: "001001001" },
+  { name: "자연과학", categoryNumber: "001001002" },
+  { name: "IT 모바일", categoryNumber: "001001003" },
+  { name: "국어 외국어 사전", categoryNumber: "001001004" },
+  { name: "청소년", categoryNumber: "001001005" },
+  { name: "예술", categoryNumber: "001001007" },
+  { name: "만화", categoryNumber: "001001008" },
+  { name: "여행", categoryNumber: "001001009" },
+  { name: "역사", categoryNumber: "001001010" },
+  { name: "건강 취미", categoryNumber: "001001011" },
+  { name: "대학교재", categoryNumber: "001001014" },
+  { name: "수험서 자격증", categoryNumber: "001001015" },
+  { name: "어린이", categoryNumber: "001001016" },
   { name: "인문", categoryNumber: "001001019" },
+  { name: "인물", categoryNumber: "001001020" },
+  { name: "종교", categoryNumber: "001001021" },
+  { name: "사회 정치", categoryNumber: "001001022" },
+  { name: "전집", categoryNumber: "001001023" },
+  { name: "잡지", categoryNumber: "001001024" },
+  { name: "경제 경영", categoryNumber: "001001025" },
+  { name: "자기계발", categoryNumber: "001001026" },
+  { name: "유아", categoryNumber: "001001027" },
+  { name: "초등참고서", categoryNumber: "001001044" },
+  { name: "소설/시/희곡", categoryNumber: "001001046" },
   { name: "에세이", categoryNumber: "001001047" },
-  { name: "소설/시/희곡", categoryNumber: "001001046" }
+  { name: "중등참고서", categoryNumber: "001001049" },
+  { name: "고등참고서", categoryNumber: "001001050" }
 ];
 
+// 알라딘 베스트셀러 페이지의 분야 30개. CID는 그 페이지의 wbest.aspx 링크에서
+// 읽었다. "종합"(CID=0)은 이미 종합 목록으로 따로 수집하므로 넣지 않는다.
 const ALADIN_CATEGORIES = [
+  { name: "건강/취미", cid: "55890" },
   { name: "경제경영", cid: "170" },
-  { name: "자기계발", cid: "336" },
-  { name: "인문학", cid: "656" },
+  { name: "고전", cid: "2105" },
+  { name: "과학", cid: "987" },
+  { name: "달력/기타", cid: "4395" },
+  { name: "대학교재/전문서적", cid: "8257" },
+  { name: "만화/라이트노벨", cid: "2551" },
+  { name: "사회과학", cid: "798" },
+  { name: "소설/시/희곡", cid: "1" },
+  { name: "수험서/자격증", cid: "1383" },
+  { name: "어린이", cid: "1108" },
   { name: "에세이", cid: "55889" },
-  { name: "소설/시/희곡", cid: "1" }
+  { name: "여행", cid: "1196" },
+  { name: "역사", cid: "74" },
+  { name: "예술/대중문화", cid: "517" },
+  { name: "외국어", cid: "1322" },
+  { name: "요리/살림", cid: "1230" },
+  { name: "유아", cid: "13789" },
+  { name: "인문학", cid: "656" },
+  { name: "자기계발", cid: "336" },
+  { name: "잡지", cid: "2913" },
+  { name: "장르소설", cid: "112011" },
+  { name: "전집/중고전집", cid: "17195" },
+  { name: "종교/역학", cid: "1237" },
+  { name: "좋은부모", cid: "2030" },
+  { name: "청소년", cid: "1137" },
+  { name: "컴퓨터/모바일", cid: "351" },
+  { name: "초등학교참고서", cid: "50246" },
+  { name: "중학교참고서", cid: "76000" },
+  { name: "고등학교참고서", cid: "76001" }
 ];
 
 const cache = new Map();
@@ -278,8 +356,18 @@ const YES24_CATEGORY_SOURCES = YES24_CATEGORIES.flatMap((category) =>
   })
 );
 
+// 알라딘이 실제로 내주지 않는 분야×기간 조합. 없는 조합을 계속 부르면 수집이
+// 매번 오류 2건으로 끝나고, 그러면 진짜 고장과 구분이 안 된다. 직접 확인했다 —
+// 장르소설 실시간과 전집/중고전집 일간은 목록 자체가 없고(잡히는 항목 1개는 광고),
+// 같은 분야의 주간은 74권으로 멀쩡하다. 서점이 다시 열면 여기서 지우면 된다.
+const ALADIN_MISSING_CATEGORY_PERIODS = new Set(["realtime:112011", "daily:17195"]);
+
 const ALADIN_CATEGORY_SOURCES = ALADIN_CATEGORIES.flatMap((category) =>
-  ["realtime", "daily", "weekly"].map((period) => {
+  ["realtime", "daily", "weekly"]
+    .filter(
+      (period) => !ALADIN_MISSING_CATEGORY_PERIODS.has(`${period}:${category.cid}`)
+    )
+    .map((period) => {
     const sourceUrl = makeAladinUrl(period, category.cid);
 
     return makeCategorySource({
@@ -289,7 +377,13 @@ const ALADIN_CATEGORY_SOURCES = ALADIN_CATEGORIES.flatMap((category) =>
       id: `aladin-${period}-${category.cid}`,
       sourceUrl,
       load: () =>
-        fetchAladinList(sourceUrl, { limit: RANK_LIMIT, pages: ALADIN_PAGES_FOR_100 })
+        fetchAladinList(sourceUrl, {
+          limit: RANK_LIMIT,
+          // 알라딘 분야 실시간(NowBest)은 30권이 끝이다. 수집해 보니 30개 분야
+          // 전부 최대 30권이었다 — 둘째 쪽은 빈 응답인데, 분야가 30개라
+          // 그 헛걸음이 그대로 수집 시간이 된다.
+          pages: period === "realtime" ? 1 : ALADIN_PAGES_FOR_100
+        })
     });
   })
 );
@@ -1144,6 +1238,19 @@ function createHeaders(extra = {}) {
 
 // 목록이 많아 한 번에 수십 건이 나가면 서점 쪽에서 차단당하므로
 // 도메인마다 동시 요청 수를 제한한다.
+//
+// 알라딘만 8로 올려 뒀다. 요청 하나가 2.3초씩 걸리는데 분야가 30개라 4로는
+// 알라딘 혼자 수집 시간의 절반을 먹었다. 16개 분야로 재보니 동시 4에서 10.7초,
+// 8에서 5.4초였고 요청당 지연(2351ms → 2463ms)도 오류(0건)도 늘지 않았다.
+// 12까지 올려도 4.9초라 더 나아지지 않아 8에서 멈췄다.
+const HOST_CONCURRENCY_BY_HOST = {
+  "www.aladin.co.kr": 8
+};
+
+function hostConcurrency(host) {
+  return HOST_CONCURRENCY_BY_HOST[host] || HOST_CONCURRENCY;
+}
+
 const hostQueues = new Map();
 
 function getHostQueue(host) {
@@ -1157,7 +1264,7 @@ function getHostQueue(host) {
 function acquireHostSlot(host) {
   const queue = getHostQueue(host);
 
-  if (queue.active < HOST_CONCURRENCY) {
+  if (queue.active < hostConcurrency(host)) {
     queue.active += 1;
     return Promise.resolve();
   }
