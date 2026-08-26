@@ -180,6 +180,48 @@ function visibleDropouts(book) {
   return (book.droppedOut || []).slice(0, FOCUS_DROPPED_LIMIT);
 }
 
+// 서버가 내려주는 listUrl 에는 조각이 없다. 제목을 퍼센트 인코딩한 조각이
+// 항목마다 100바이트가 넘어서, 전 서점 분야를 담은 응답에서만 2.2MB였고
+// 그 무게 때문에 CDN 캐시가 통째로 꺼졌다. 제목은 이미 항목에 있으니 여기서 만든다.
+//
+// 자르는 규칙은 server.js 의 textFragmentAnchor 와 같아야 한다. 단어 중간에서
+// 끊으면 텍스트 조각이 아예 매칭되지 않는다 — 조각은 단어 경계에서만 일치한다.
+function titleFragment(title) {
+  const text = String(title || "").replace(/\s+/g, " ").trim();
+
+  if (!text) {
+    return "";
+  }
+
+  let snippet = text;
+
+  if (text.length > 32) {
+    const head = text.slice(0, 32);
+    const lastSpace = head.lastIndexOf(" ");
+    snippet = lastSpace > 0 ? head.slice(0, lastSpace) : text;
+  }
+
+  return `#:~:text=${encodeURIComponent(snippet)}`;
+}
+
+// 순위 목록으로 가는 링크. 그 책 제목까지 스크롤되도록 조각을 붙인다.
+//
+// 제목 조각이 언제나 우선이다. 서버가 붙여 둔 상품 id 앵커(#ordChk_, #addInputShop_)는
+// 카드 하단을 가리켜서 정작 제목이 화면 밖으로 밀린다 — 제목을 모를 때만 쓴다.
+function rankHref(item) {
+  if (!item.listUrl) {
+    return item.link || "";
+  }
+
+  const fragment = titleFragment(item.title);
+
+  if (!fragment) {
+    return item.listUrl;
+  }
+
+  return item.listUrl.split("#")[0] + fragment;
+}
+
 function searchableText(item) {
   return [item.title, item.meta, item.secondary, item.publisher]
     .filter(Boolean)
@@ -204,7 +246,7 @@ function renderItem(item) {
 
   // 순위를 보러 온 화면이므로 그 책이 실제로 놓인 목록 위치로 보낸다.
   // 목록 위치를 못 만들었을 때만 상품 상세로 떨어진다.
-  const href = item.listUrl || item.link;
+  const href = rankHref(item);
   const hint = item.listUrl
     ? `${item.title} · ${item.rank}위 위치로 이동`
     : `${item.title} 상세 페이지 열기`;
@@ -455,7 +497,7 @@ function renderFocusRank(label, appearance) {
     <strong>${escapeHtml(appearance.rank)}위</strong>
     <em class="focus-rank-source">${escapeHtml(source)}</em>
   `;
-  const href = appearance.listUrl || appearance.link;
+  const href = rankHref(appearance);
 
   const accent = storeAccentStyle(appearance.storeId);
 
@@ -513,7 +555,7 @@ function renderFocusAppearance(item) {
   const label = `${item.storeName} · ${item.listName} · ${item.rank}위`;
   const body = `${escapeHtml(label)}${renderRankDelta(item)}`;
   // 해당 위가 있는 목록 페이지 + 그 도서 위치를 우선하고, 없으면 도서 상세로 간다.
-  const href = item.listUrl || item.link;
+  const href = rankHref(item);
 
   if (!href) {
     return `<span class="focus-chip">${body}</span>`;

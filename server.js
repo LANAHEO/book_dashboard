@@ -1173,18 +1173,15 @@ function appendRankAnchor(storeId, pageUrl, link, title) {
 
   const base = pageUrl.split("#")[0];
 
-  // 상품 id 앵커(ordChk, addInputShop)는 카드 하단에 있어 제목이 화면 밖으로 밀린다.
-  // 제목 텍스트 조각으로 스크롤하면 클릭 직후 그 도서가 보이게 된다(Chrome/Edge).
+  // 텍스트 조각(#:~:text=제목)은 여기서 붙이지 않고 화면이 붙인다.
+  // 제목을 퍼센트 인코딩한 조각이 항목마다 100바이트를 넘어서, 분야를 전 서점
+  // 전체로 늘린 뒤 이 조각만 2.2MB였다. 그 때문에 응답이 12MB를 넘겨 Vercel CDN이
+  // 캐시를 포기했고(x-vercel-cache: MISS) 매 방문이 다시 5초가 됐다.
+  // 제목은 이미 항목에 들어 있으니 조각은 브라우저에서 만들면 된다 —
+  // public/app.js 의 rankHref()가 같은 규칙(32자, 단어 경계)으로 붙인다.
   //
-  // 교보는 목록이 클라이언트 렌더링이라 조각이 바로 걸리지 않는다. 크롬이 목록을
-  // 다 그린 뒤에 다시 찾아 주므로 실측 2.2~2.4초가 걸리고, 그 사이 목록 맨 위에
-  // 머문다. 느리지만 이 조각이 유일한 이동 수단이다 — 빼면 그 책은 화면 밖에
-  // 그대로 남아 아예 이동하지 않는다.
-  const fragment = textFragmentAnchor(title);
-
-  if (fragment) {
-    return `${base}${fragment}`;
-  }
+  // 상품 id 앵커(ordChk, addInputShop)는 카드 하단이라 제목이 화면 밖으로 밀린다.
+  // 제목을 모르는 경우에만 최후 수단으로 쓴다.
 
   const itemId = extractStoreItemId(storeId, link);
 
