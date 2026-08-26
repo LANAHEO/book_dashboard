@@ -1217,22 +1217,27 @@ function describeRankGap(items, perPage) {
 // per를 100으로 고정하지 않는 이유: 교보 목록은 클라이언트 렌더링이라 다 그려진 뒤에야
 // 텍스트 조각이 걸린다. 그릴 권수가 그대로 대기 시간이 된다. 실시간 33위 실측으로
 // per=100은 9.5초, per=60은 5.5초, per=40은 3.7초였다.
-const KYOBO_PAGE_STEP = 20;
+// 교보 순위 페이지는 목록을 브라우저에서 그린다. 그래서 그 책까지 스크롤되기를
+// 기다려야 했고(실측 1.9~2.5초), 페이지가 스스로 다시 로드하는 타이밍에 걸리면
+// 조각이 날아가 아예 스크롤되지 않았다.
+//
+// 그럴 바에는 스크롤이 필요 없게 만든다. page=2 로 두고 per 을 조절하면 그 쪽의
+// 첫 항목을 우리가 고를 수 있다 — page=2&per=P 는 P+1 위부터 보여 준다.
+// 목표 순위보다 조금 앞에서 시작하게 잡으면 그 책이 화면 맨 위 근처에 온다.
+// 조각도 그대로 붙이지만, 이제는 실패해도 책이 이미 눈앞에 있다.
 const KYOBO_MAX_PAGE_SIZE = 100;
 
-// 하한을 두는 이유는 순위 변동이다. 저장한 순위보다 책이 아래로 밀리면 그 쪽에
-// 없어서 클릭이 헛돈다. 일간·주간은 완료된 기간을 집계한 값이라 거의 안 움직인다 —
-// 20위 이내 60건을 확인했더니 벗어난 것이 하나도 없었다. 그래서 하한을 20으로 둔다.
-// 실시간은 다르다. 매시 뒤집히므로 여유를 두고 40에서 시작한다.
-const KYOBO_MIN_PAGE_SIZE = 20;
-const KYOBO_MIN_REALTIME_PAGE_SIZE = 40;
+// 우리가 저장한 뒤 순위가 위로 오르면 창 밖으로 나간다. 실측한 최대 상승폭은
+// 일간 2칸, 주간 1칸, 종합주간 0칸, 실시간 3칸이었다. 3칸을 여유로 둔다.
+const KYOBO_RANK_MARGIN = 3;
+
+// 창이 목표 순위를 담으려면 2 * per >= rank 여야 한다. 여백 3에서는 8위부터
+// 성립한다. 그보다 앞 순위는 첫 쪽 자체가 그 책 근처다.
+const KYOBO_WINDOW_MIN_RANK = 2 * KYOBO_RANK_MARGIN + 2;
+const KYOBO_HEAD_PAGE_SIZE = 20;
 
 function makeKyoboPageUrl(url, rank) {
   const pageUrl = new URL(url);
-
-  // 분야별 실시간과 종합 실시간은 같은 /realtime 경로를 쓴다.
-  const realtime = pageUrl.pathname.includes("/realtime");
-  const floor = realtime ? KYOBO_MIN_REALTIME_PAGE_SIZE : KYOBO_MIN_PAGE_SIZE;
 
   // 분야별 주간처럼 교보가 101위 이상을 주는 목록이 있다. 한 쪽에 100권까지만
   // 담기니 그때는 그 순위가 있는 쪽으로 넘긴다.
@@ -1242,11 +1247,18 @@ function makeKyoboPageUrl(url, rank) {
     return pageUrl.toString();
   }
 
-  const fitted = Math.ceil(rank / KYOBO_PAGE_STEP) * KYOBO_PAGE_STEP;
-  const per = Math.min(KYOBO_MAX_PAGE_SIZE, Math.max(floor, fitted));
+  if (rank < KYOBO_WINDOW_MIN_RANK) {
+    pageUrl.searchParams.set("page", "1");
+    pageUrl.searchParams.set("per", String(KYOBO_HEAD_PAGE_SIZE));
+    return pageUrl.toString();
+  }
 
-  pageUrl.searchParams.set("page", "1");
-  pageUrl.searchParams.set("per", String(per));
+  // page=2&per=P 는 P+1 위부터 시작한다. 목표보다 KYOBO_RANK_MARGIN 만큼
+  // 앞에서 시작하게 P 를 정하면, 그 책이 위에서 네 번째 줄에 놓인다.
+  const start = rank - KYOBO_RANK_MARGIN;
+
+  pageUrl.searchParams.set("page", "2");
+  pageUrl.searchParams.set("per", String(start - 1));
   return pageUrl.toString();
 }
 
