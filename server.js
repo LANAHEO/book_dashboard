@@ -1218,11 +1218,21 @@ function describeRankGap(items, perPage) {
 // 텍스트 조각이 걸린다. 그릴 권수가 그대로 대기 시간이 된다. 실시간 33위 실측으로
 // per=100은 9.5초, per=60은 5.5초, per=40은 3.7초였다.
 const KYOBO_PAGE_STEP = 20;
-const KYOBO_MIN_PAGE_SIZE = 40;
 const KYOBO_MAX_PAGE_SIZE = 100;
+
+// 하한을 두는 이유는 순위 변동이다. 저장한 순위보다 책이 아래로 밀리면 그 쪽에
+// 없어서 클릭이 헛돈다. 일간·주간은 완료된 기간을 집계한 값이라 거의 안 움직인다 —
+// 20위 이내 60건을 확인했더니 벗어난 것이 하나도 없었다. 그래서 하한을 20으로 둔다.
+// 실시간은 다르다. 매시 뒤집히므로 여유를 두고 40에서 시작한다.
+const KYOBO_MIN_PAGE_SIZE = 20;
+const KYOBO_MIN_REALTIME_PAGE_SIZE = 40;
 
 function makeKyoboPageUrl(url, rank) {
   const pageUrl = new URL(url);
+
+  // 분야별 실시간과 종합 실시간은 같은 /realtime 경로를 쓴다.
+  const realtime = pageUrl.pathname.includes("/realtime");
+  const floor = realtime ? KYOBO_MIN_REALTIME_PAGE_SIZE : KYOBO_MIN_PAGE_SIZE;
 
   // 분야별 주간처럼 교보가 101위 이상을 주는 목록이 있다. 한 쪽에 100권까지만
   // 담기니 그때는 그 순위가 있는 쪽으로 넘긴다.
@@ -1233,7 +1243,7 @@ function makeKyoboPageUrl(url, rank) {
   }
 
   const fitted = Math.ceil(rank / KYOBO_PAGE_STEP) * KYOBO_PAGE_STEP;
-  const per = Math.min(KYOBO_MAX_PAGE_SIZE, Math.max(KYOBO_MIN_PAGE_SIZE, fitted));
+  const per = Math.min(KYOBO_MAX_PAGE_SIZE, Math.max(floor, fitted));
 
   pageUrl.searchParams.set("page", "1");
   pageUrl.searchParams.set("per", String(per));
