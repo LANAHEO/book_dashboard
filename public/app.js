@@ -961,10 +961,17 @@ function renderCategoryBoard(lists) {
     (list.groupKeys || []).includes(state.categoryGroup)
   );
 
+  // 교보는 분야별 실시간을 제공하지 않아 그 칸은 세우지 않는다(아래 참고).
+  // 기간 목록도 이걸 반영해야 한다 — 교보에만 있는 분야(한국소개도서)는
+  // 실시간을 남겨 두면 칸이 하나도 없는 화면이 된다.
+  const shownLists = groupLists.filter(
+    (list) => !(list.storeId === "kyobo" && list.realtime)
+  );
+
   // 기간은 이 분야에 실제로 있는 것만 고른다. 서점이 안 내주는 조합이 있어서
   // (알라딘 장르소설 실시간처럼) 전체 기준으로 고르면 빈 화면이 된다.
   const periods = CATEGORY_PERIODS.filter((period) =>
-    groupLists.some((list) => list.period === period.key)
+    shownLists.some((list) => list.period === period.key)
   );
 
   if (!periods.length) {
@@ -975,8 +982,19 @@ function renderCategoryBoard(lists) {
     state.categoryPeriod = periods[0].key;
   }
 
+  // 교보는 분야별 실시간을 제공하지 않는다. 우리가 종합 실시간 100위를 분야로
+  // 쪼개 만든 목록이라, 클릭하면 갈 수 있는 곳이 종합 실시간 페이지뿐이다 —
+  // 분야 페이지로는 갈 수가 없고(/realtime/domestic/13 은 404) 그 페이지에서
+  // 그 책을 찾는 데 3.4~4.9초가 걸리며, 순위가 흔들리면 아예 없기도 하다.
+  // 옆 두 서점은 각자 분야 페이지로 정확히 가므로, 교보만 어긋난 칸이 된다.
+  // 그래서 실시간에서는 교보 칸을 세우지 않고 이유를 밝힌다.
+  // 일간·주간은 교보도 분야 페이지가 있어 그대로 세 칸이 선다.
+  const hiddenStores = groupLists.filter(
+    (list) => list.period === state.categoryPeriod && list.storeId === "kyobo" && list.realtime
+  );
+
   const activeLists = sortByStoreOrder(
-    groupLists.filter((list) => list.period === state.categoryPeriod)
+    shownLists.filter((list) => list.period === state.categoryPeriod)
   ).map(withLoadedItems);
 
   // 지금 분야를 받아 두고, 좌우 이웃도 한가할 때 미리 당긴다.
@@ -999,9 +1017,11 @@ function renderCategoryBoard(lists) {
 
   const activeGroup = groups.find((group) => group.key === state.categoryGroup);
   const totalCollected = activeLists.reduce((sum, list) => sum + (list.itemCount || 0), 0);
-  const storeNote = activeLists.length < 3
-    ? `이 분야는 ${activeLists.map((list) => list.storeName).join("·")}에만 있습니다.`
-    : "";
+  const storeNote = hiddenStores.length
+    ? "교보문고는 분야별 실시간 순위를 제공하지 않아 일간·주간에서만 볼 수 있습니다."
+    : activeLists.length < 3
+      ? `이 분야는 ${activeLists.map((list) => list.storeName).join("·")}에만 있습니다.`
+      : "";
 
   return `
     <section class="section-block category-board" id="category-rankings">
@@ -1016,7 +1036,7 @@ function renderCategoryBoard(lists) {
           <span>권 수집</span>
         </div>
       </div>
-      ${renderCategoryPeriodSwitcher(groupLists, activeLists[0] && activeLists[0].accent)}
+      ${renderCategoryPeriodSwitcher(shownLists, activeLists[0] && activeLists[0].accent)}
       <div class="category-selector" aria-label="분야 선택">
         ${groups
           .map(
