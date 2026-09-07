@@ -3243,8 +3243,10 @@ async function serveStatic(response, requestPath) {
   }
 }
 
-async function refreshRealtimeSources() {
-  const realtimeIds = SOURCES.filter((source) => source.realtime).map((source) => source.id);
+async function refreshRealtimeSources(skipIds = new Set()) {
+  const realtimeIds = SOURCES.filter(
+    (source) => source.realtime && !skipIds.has(source.id)
+  ).map((source) => source.id);
   await Promise.all(
     realtimeIds.map((id) =>
       loadSource(id, { force: true }).catch((error) => {
@@ -3252,6 +3254,75 @@ async function refreshRealtimeSources() {
       })
     )
   );
+}
+
+// 서점마다 순위를 갈아 끼우는 시각이 다르다. 실측한 값이다 — 같은 순간(11:13 KST)에
+// 교보는 11:00 기준을 내주는데 예스24는 10:00 기준이었고, 알라딘은 기준 자체를
+// 밝히지 않는다. 그래서 "몇 시에 가져올지"를 우리가 정해 두면 어느 한 곳과는
+// 반드시 어긋난다. 한 시간에 한 번 가져오는 동안 서점이 바뀌면 그 시간만큼
+// 대시보드가 뒤처지고, 그게 순위가 달라 보이는 이유였다.
+//
+// 대신 자주 들여다보되, 바뀐 게 없으면 아무것도 하지 않는다. 종합 실시간 세 개만
+// 먼저 확인하면 요청 3건으로 끝나고, 실제로 바뀌었을 때만 나머지 56개를 돌린다.
+const REALTIME_PROBE_IDS = ["kyobo-realtime", "yes24-realtime", "aladin-now"];
+
+// 서점이 기준 시점을 적어 주면 그게 가장 정확한 신호다. 알라딘은 적지 않으므로
+// 상위 열 권의 순위·제목으로 갈음한다 — 그게 바뀌면 순위가 움직인 것이다.
+function rankingFingerprint(payload) {
+  if (!payload) {
+    return "";
+  }
+
+  if (payload.sourceStamp) {
+    return `stamp:${payload.sourceStamp}`;
+  }
+
+  const top = (payload.items || [])
+    .slice(0, 10)
+    .map((item) => `${item.rank}:${item.title}`)
+    .join("|");
+
+  return top ? `top:${top}` : "";
+}
+
+// 직전 값은 다시 가져오지 않고 읽기만 한다. 서버리스는 요청마다 메모리가 비어
+// 있어서, loadSource를 그냥 부르면 확인하려던 요청을 한 번 더 보내게 된다.
+async function lastKnownFingerprint(id) {
+  const cached = cache.get(id);
+
+  if (cached && cached.payload) {
+    return rankingFingerprint(cached.payload);
+  }
+
+  const persisted = await readPersistedSource(id).catch(() => null);
+
+  return persisted && persisted.payload ? rankingFingerprint(persisted.payload) : "";
+}
+
+async function probeRealtimeSources() {
+  const results = await Promise.all(
+    REALTIME_PROBE_IDS.map(async (id) => {
+      const before = await lastKnownFingerprint(id);
+
+      try {
+        const fresh = await loadSource(id, { force: true });
+        const after = rankingFingerprint(fresh);
+
+        return {
+          id,
+          // 수집이 실패해 예전 캐시를 돌려받은 것(stale)은 "바뀌었다"가 아니다.
+          changed: !fresh.stale && Boolean(after) && (!before || after !== before),
+          stamp: fresh.sourceStamp || "",
+          ok: !fresh.stale
+        };
+      } catch (error) {
+        console.error(`[collect] probe ${id}:`, error);
+        return { id, changed: false, stamp: "", ok: false };
+      }
+    })
+  );
+
+  return { changed: results.some((entry) => entry.changed), results };
 }
 
 async function refreshStandardSources() {
@@ -3544,10 +3615,30 @@ async function handleRequest(request, response) {
     const startedAt = Date.now();
 
     try {
+      let probe = null;
+
       if (scope === "all") {
         await Promise.allSettled([refreshRealtimeSources(), refreshStandardSources()]);
       } else {
-        await refreshRealtimeSources();
+        probe = await probeRealtimeSources();
+
+        // 서점이 아직 순위를 갈지 않았으면 여기서 끝낸다. 나머지 56개를 다시
+        // 긁어 봐야 같은 값이고, 스냅샷을 다시 쓰면 ▲▼ 의 비교 기준이 방금으로
+        // 당겨져 "직전 수집 대비"가 15분 전 대비가 되어 버린다.
+        if (!probe.changed && url.searchParams.get("force") !== "1") {
+          jsonResponse(response, 200, {
+            ok: true,
+            scope,
+            skipped: true,
+            reason: "서점 순위가 지난 수집과 같아 전체 수집을 건너뛰었습니다.",
+            probe: probe.results,
+            elapsedMs: Date.now() - startedAt
+          });
+          return;
+        }
+
+        // 확인용으로 방금 받은 세 개는 다시 부르지 않는다.
+        await refreshRealtimeSources(new Set(REALTIME_PROBE_IDS));
       }
 
       const payload = await rebuildDashboardSnapshot(`collect:${scope}`);
@@ -3555,6 +3646,8 @@ async function handleRequest(request, response) {
       jsonResponse(response, payload ? 200 : 500, {
         ok: Boolean(payload),
         scope,
+        skipped: false,
+        probe: probe ? probe.results : undefined,
         generatedAt: payload ? payload.generatedAt : null,
         elapsedMs: Date.now() - startedAt
       });
