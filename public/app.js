@@ -750,6 +750,17 @@ function renderFocusBoardV2() {
             // 분야 실시간 3위인 책도 빈 칸이 된다.
             const realtimeBest = periodBest("realtime");
 
+            // 제목도 순위 페이지로 보낸다. 예전에는 교보 상품 페이지로 갔는데,
+            // 카드 안에서 칩·타일은 순위로 가고 제목만 구매 페이지로 새는 꼴이라
+            // 같은 카드를 눌러도 어디로 갈지 알 수 없었다. 우선순위가 가장 높은
+            // 노출을 쓴다 — 주간이 있으면 주간, 없으면 일간, 분야, 실시간 순이다.
+            const titleTarget =
+              weeklyBest || dailyBest || categoryBest || realtimeBest || shownAppearances[0];
+            const titleHref = titleTarget ? rankHref(titleTarget) : book.link || "";
+            const titleHint = titleTarget
+              ? `${titleTarget.storeName} · ${titleTarget.listName} · ${titleTarget.rank}위 위치로 이동`
+              : `${book.title} 상세 페이지 열기`;
+
             const droppedOut = renderDroppedOut(book);
             // 이번 수집에 없고 직전에는 있었다면 "진입 대기"가 아니라 이탈이다.
             const statusLabel = appearances.length
@@ -771,8 +782,8 @@ function renderFocusBoardV2() {
                   </span>
                 </div>
                 <h3 class="focus-title">
-                  ${book.link
-                    ? `<a href="${escapeHtml(book.link)}" target="_blank" rel="noreferrer">${escapeHtml(book.title)}</a>`
+                  ${titleHref
+                    ? `<a href="${escapeHtml(titleHref)}" target="_blank" rel="noreferrer" title="${escapeHtml(titleHint)}">${escapeHtml(book.title)}</a>`
                     : escapeHtml(book.title)}
                 </h3>
                 <div class="focus-rank-grid">
