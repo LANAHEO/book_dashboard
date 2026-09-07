@@ -3323,6 +3323,18 @@ async function handleRequest(request, response) {
 
   const url = new URL(request.url, `http://${request.headers.host || `${HOST}:${PORT}`}`);
 
+  // Vercel의 rewrite는 함수에 목적지 경로(/api/index.js)를 넘긴다. 원래 경로가
+  // 사라지므로 "/" 말고는 어느 라우트에도 걸리지 않고 전부 404가 됐다 —
+  // /api/dashboard 도 그래서 404였고, 수집 워크플로가 8월 26일부터 매시간
+  // 실패하고 있었다. vercel.json이 원래 경로를 __path에 실어 주므로 그걸 쓴다.
+  // 상시 서버(로컬·Render)에는 이 파라미터가 없어 아무 일도 하지 않는다.
+  const forwardedPath = url.searchParams.get("__path");
+
+  if (forwardedPath && forwardedPath.startsWith("/")) {
+    url.searchParams.delete("__path");
+    url.pathname = forwardedPath.split("?")[0].split("#")[0];
+  }
+
   if (request.method !== "GET") {
     jsonResponse(response, 405, { error: "Method not allowed" });
     return;
