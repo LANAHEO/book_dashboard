@@ -77,7 +77,9 @@ const VIEW_LABELS = {
 };
 
 function escapeHtml(value) {
-  return String(value || "")
+  // 0을 빈 문자열로 떨어뜨리면 안 된다. "검색 결과 0종"이 "검색 결과 종"으로,
+  // "0곳 노출"이 "곳 노출"로 나온다. 숫자 0은 값이 없는 것과 다르다.
+  return String(value ?? "")
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
@@ -149,9 +151,27 @@ function filterBySelectedStore(items) {
   return items.filter((item) => item.storeId === state.selectedStore);
 }
 
+// 검색은 순위 목록만 걸러 왔고 상상스퀘어 카드는 그대로 있었다. 같은 화면의
+// 같은 입력칸인데 한쪽에만 듣는다. 제목과 출판사로 맞춰 본다 — 노출 항목에
+// 들어 있는 값이 그 둘이다.
+function focusBookMatchesSearch(book) {
+  if (!state.search) {
+    return true;
+  }
+
+  const parts = [book.title];
+
+  (book.appearances || []).forEach((item) => {
+    parts.push(item.title, item.publisher);
+  });
+
+  return parts.filter(Boolean).join(" ").toLowerCase().includes(state.search);
+}
+
 function getVisibleFocusBooks() {
   return (
     (state.dashboard?.focusBooks || [])
+      .filter(focusBookMatchesSearch)
       .map((book) => ({
         ...book,
         appearances: filterBySelectedStore(book.appearances || []),
@@ -722,8 +742,15 @@ function renderFocusBoardV2() {
             : ""}
           ${renderFocusDeltaSummary(focusBooks)}
         </div>
-        <span class="section-count">${escapeHtml(focusBooks.length)}종 추적</span>
+        <span class="section-count">${
+          state.search
+            ? `검색 결과 ${escapeHtml(focusBooks.length)}종`
+            : `${escapeHtml(focusBooks.length)}종 추적`
+        }</span>
       </div>
+      ${!focusBooks.length && state.search
+        ? '<div class="panel-empty">검색어와 일치하는 상상스퀘어 도서가 없습니다.</div>'
+        : ""}
       <div class="focus-grid">
         ${focusBooks
           .map((book) => {
@@ -1413,7 +1440,7 @@ function wireSwipeTracks() {
 
       const idleLabel = counter ? counter.textContent.trim() : "";
 
-      const sync = () => {
+      const sync = (moved) => {
         // 가로로 못 넘기는 화면(데스크톱)에서는 손댈 것이 없다.
         if (track.scrollWidth <= track.clientWidth + 1) {
           if (counter) {
@@ -1424,6 +1451,12 @@ function wireSwipeTracks() {
 
         const index = nearestPanelIndex(track);
 
+        // 넘기기 전에는 머리글이 제 할 말을 하게 둔다("28종 추적", "검색 결과 3종").
+        // 몇 번째인지는 실제로 넘기기 시작한 다음부터 쓸모가 있다.
+        if (counter && !moved) {
+          counter.textContent = idleLabel;
+        }
+
         if (switcher) {
           switcher.querySelectorAll("[data-swipe-index]").forEach((button, i) => {
             const active = i === index;
@@ -1432,7 +1465,7 @@ function wireSwipeTracks() {
           });
         }
 
-        if (counter) {
+        if (counter && moved) {
           counter.textContent = `${index + 1} / ${track.children.length}`;
         }
       };
@@ -1443,12 +1476,12 @@ function wireSwipeTracks() {
         "scroll",
         () => {
           window.clearTimeout(timer);
-          timer = window.setTimeout(sync, 90);
+          timer = window.setTimeout(() => sync(true), 90);
         },
         { passive: true }
       );
 
-      sync();
+      sync(false);
     });
 }
 
