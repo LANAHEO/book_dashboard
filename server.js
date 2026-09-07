@@ -1257,12 +1257,16 @@ function isKyoboRealtimeList(sourceUrl) {
 // HTML에 없다. 확인해 봤다 — 종합 주간도, 분야 일간·주간도, 파라미터를 빼도
 // 0건이다. 그 페이지에서는 형광펜이 켜질 수가 없다.
 //
-// 그래서 그때는 상품 페이지로 보낸다. 상품 페이지는 서버에서 그려 오고(제목이
-// HTML 안에 있다) 그 책 자체라, 목록에서 찾아 헤맬 일이 없다. 교보가 그 페이지에
-// 베스트 순위도 같이 적어 준다.
-function kyoboProductUrl(link) {
-  const id = extractStoreItemId("kyobo", link);
-  return id ? `https://product.kyobobook.co.kr/detail/${id}` : "";
+// 그렇다고 그 책 상품 페이지로 보내지는 않는다. 순위를 누르면 순위 페이지가
+// 열려야 하고, 서점마다 가는 곳이 다르면 그것부터 헷갈린다. 형광펜이 불가능한
+// 자리에서는 창(page=2&per=N)으로 그 책을 맨 위 가까이 올려 두는 것이 최선이다.
+// 어차피 그 페이지들은 서버 렌더링이 없으므로 창을 써도 잃는 것이 없다.
+function makeKyoboRankUrl(sourceUrl, rank) {
+  if (isKyoboRealtimeList(sourceUrl) && rank <= KYOBO_REALTIME_SSR_RANKS) {
+    return sourceUrl.split("?")[0];
+  }
+
+  return makeKyoboPageUrl(sourceUrl, rank);
 }
 
 function makeKyoboPageUrl(url, rank) {
@@ -1396,13 +1400,7 @@ function buildRankListUrl(storeId, sourceUrl, rank, link = "", title = "") {
       } else if (storeId === "aladin") {
         pageUrl = makeAladinPageUrl(sourceUrl, Math.ceil(rankValue / 50));
       } else if (storeId === "kyobo") {
-        // 서버가 그려 주는 자리면 파라미터 없이 보낸다. 그래야 조각이 켜진다.
-        if (isKyoboRealtimeList(sourceUrl) && rankValue <= KYOBO_REALTIME_SSR_RANKS) {
-          pageUrl = sourceUrl.split("?")[0];
-        } else {
-          // 목록에서는 형광펜이 켜질 수 없는 자리다. 그 책 페이지로 바로 보낸다.
-          pageUrl = kyoboProductUrl(link) || makeKyoboPageUrl(sourceUrl, rankValue);
-        }
+        pageUrl = makeKyoboRankUrl(sourceUrl, rankValue);
       }
     }
   } catch (error) {

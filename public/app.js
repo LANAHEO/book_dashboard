@@ -236,10 +236,6 @@ function titleFragment(title) {
   return `#:~:text=${encodeURIComponent(snippet)}`;
 }
 
-function isBookPageUrl(url) {
-  return String(url || "").includes("product.kyobobook.co.kr/detail/");
-}
-
 // 순위 목록으로 가는 링크. 그 책 제목까지 스크롤되도록 조각을 붙인다.
 //
 // 제목 조각이 언제나 우선이다. 서버가 붙여 둔 상품 id 앵커(#ordChk_, #addInputShop_)는
@@ -247,12 +243,6 @@ function isBookPageUrl(url) {
 function rankHref(item) {
   if (!item.listUrl) {
     return item.link || "";
-  }
-
-  // 그 책 페이지로 바로 가는 주소면 조각이 필요 없다 — 이미 그 책 앞이다.
-  // 교보 목록 중 서버가 그려 주지 않는 자리는 server.js가 여기로 돌린다.
-  if (isBookPageUrl(item.listUrl)) {
-    return item.listUrl;
   }
 
   const fragment = titleFragment(item.title);
@@ -289,11 +279,9 @@ function renderItem(item) {
   // 순위를 보러 온 화면이므로 그 책이 실제로 놓인 목록 위치로 보낸다.
   // 목록 위치를 못 만들었을 때만 상품 상세로 떨어진다.
   const href = rankHref(item);
-  const hint = isBookPageUrl(href)
-    ? `${item.title} 상품 페이지 열기`
-    : item.listUrl
-      ? `${item.title} · ${item.rank}위 위치로 이동`
-      : `${item.title} 상세 페이지 열기`;
+  const hint = item.listUrl
+    ? `${item.title} · ${item.rank}위 위치로 이동`
+    : `${item.title} 상세 페이지 열기`;
   const titleStart = href
     ? `<a class="book-title" href="${escapeHtml(href)}" target="_blank" rel="noreferrer" title="${escapeHtml(hint)}">`
     : '<span class="book-title">';
@@ -607,9 +595,7 @@ function renderFocusAppearance(item) {
     return `<span class="focus-chip">${body}</span>`;
   }
 
-  const hint = isBookPageUrl(href)
-    ? `${label} · 교보 상품 페이지 열기${deltaHint(item)}`
-    : `${label} 위치로 이동${deltaHint(item)}`;
+  const hint = `${label} 위치로 이동${deltaHint(item)}`;
 
   return `<a class="focus-chip"${storeAccentStyle(item.storeId)} href="${escapeHtml(href)}" target="_blank" rel="noreferrer" title="${escapeHtml(hint)}">${body}</a>`;
 }
