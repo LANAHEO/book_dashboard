@@ -39,6 +39,10 @@
 
       <section class="collect-status" id="collect-status" aria-label="서점별 데이터 수집 시점"></section>
 
+      <!-- 모바일에서 탭과 검색·서점 칸을 한 덩어리로 화면 위에 붙여 둔다.
+           둘을 따로 붙이면 위치를 픽셀로 계산해 맞춰야 하고, 탭 높이가 바뀌는
+           순간 겹치거나 벌어진다. 한 상자로 묶으면 브라우저가 알아서 쌓는다. -->
+      <div class="sticky-head">
       <!-- 탭 순서는 우리가 정한 순위 우선순위다: 주간 → 일간 → 분야별 → 실시간.
            상상스퀘어는 이 대시보드를 보는 이유라 그 앞에 둔다. -->
       <nav class="view-nav" aria-label="대시보드 화면 선택">
@@ -61,6 +65,7 @@
         </label>
         <div class="store-filter-group" id="store-filters" aria-label="Store filters"></div>
       </section>
+      </div>
 
       <section class="summary-strip" id="summary-strip">
         <span id="summary-text">데이터를 준비하고 있습니다.</span>

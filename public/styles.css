@@ -2009,6 +2009,25 @@ a.focus-chip:hover {
     text-align: center;
   }
 
+  /* 검색과 서점 칸은 순위를 훑는 내내 쓰는 자리다. 화면 위에 붙여 둔다.
+     탭과 한 상자로 묶어 통째로 붙이므로, 둘 사이 간격을 픽셀로 맞출 일이 없다. */
+  .sticky-head {
+    position: sticky;
+    top: 0;
+    z-index: 30;
+    /* 아래 카드가 비쳐 지나가면 글자가 겹쳐 읽힌다. 페이지 바탕으로 덮는다. */
+    margin: 0 -10px;
+    padding: 7px 10px 8px;
+    background: var(--page);
+  }
+
+  /* 상자가 붙으므로 안쪽 탭은 제자리에 둔다. 둘 다 붙이면 서로 밀어낸다. */
+  .sticky-head .view-nav {
+    position: static;
+    top: auto;
+    margin-top: 0;
+  }
+
   .toolbar {
     grid-template-columns: 1fr;
     gap: 8px;
@@ -2069,8 +2088,30 @@ a.focus-chip:hover {
     display: flex;
   }
 
+  /* 상상스퀘어 카드도 옆으로 넘겨 본다. 서점 패널과 다른 점은 개수다 —
+     서점은 셋이지만 책은 스무 종이 넘어서, 한 칸을 화면에 꽉 채우면 다음 카드가
+     있는지 보이지 않는다. 88%만 차지하게 해서 옆 카드가 살짝 걸치게 둔다. */
   .focus-grid {
-    grid-template-columns: 1fr;
+    display: flex;
+    grid-template-columns: none;
+    gap: 10px;
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+    padding-bottom: 4px;
+  }
+
+  .focus-grid::-webkit-scrollbar {
+    display: none;
+  }
+
+  .focus-grid > .focus-card {
+    flex: 0 0 88%;
+    min-width: 0;
+    scroll-snap-align: start;
+    scroll-snap-stop: always;
   }
 
   /* 모바일에서는 서점을 손으로 옆으로 넘겨 본다.

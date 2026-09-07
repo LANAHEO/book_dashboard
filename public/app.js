@@ -1397,49 +1397,72 @@ function renderDashboard() {
 // 서점을 보고 있는지 이름표에 표시만 맞춘다. 화면을 다시 그리면 요소가 통째로
 // 바뀌므로 그릴 때마다 다시 건다.
 function wireSwipeTracks() {
-  elements.dashboard.querySelectorAll(".realtime-grid, .standard-grid").forEach((track) => {
-    const switcher = findSwipeSwitcher(track);
+  elements.dashboard
+    .querySelectorAll(".realtime-grid, .standard-grid, .focus-grid")
+    .forEach((track) => {
+      const switcher = findSwipeSwitcher(track);
+      // 상상스퀘어는 칸이 스무 개가 넘어 이름표를 달 수 없다. 대신 몇 번째를
+      // 보고 있는지 머리글의 "N종 추적" 자리에 적는다.
+      const counter = track.classList.contains("focus-grid")
+        ? track.parentElement && track.parentElement.querySelector(".section-count")
+        : null;
 
-    if (!switcher) {
-      return;
-    }
-
-    const sync = () => {
-      // 가로로 못 넘기는 화면(데스크톱)에서는 이름표 자체가 숨겨져 있다.
-      if (track.scrollWidth <= track.clientWidth + 1) {
+      if (!switcher && !counter) {
         return;
       }
 
-      const panels = [...track.children];
-      const index = panels.reduce(
-        (best, panel, i) =>
-          Math.abs(panel.offsetLeft - track.scrollLeft) <
-          Math.abs(panels[best].offsetLeft - track.scrollLeft)
-            ? i
-            : best,
-        0
+      const idleLabel = counter ? counter.textContent.trim() : "";
+
+      const sync = () => {
+        // 가로로 못 넘기는 화면(데스크톱)에서는 손댈 것이 없다.
+        if (track.scrollWidth <= track.clientWidth + 1) {
+          if (counter) {
+            counter.textContent = idleLabel;
+          }
+          return;
+        }
+
+        const index = nearestPanelIndex(track);
+
+        if (switcher) {
+          switcher.querySelectorAll("[data-swipe-index]").forEach((button, i) => {
+            const active = i === index;
+            button.classList.toggle("active", active);
+            button.setAttribute("aria-pressed", active ? "true" : "false");
+          });
+        }
+
+        if (counter) {
+          counter.textContent = `${index + 1} / ${track.children.length}`;
+        }
+      };
+
+      // 스크롤은 손가락 하나에 수십 번 뜬다. 멈춘 뒤에 한 번만 맞춘다.
+      let timer = null;
+      track.addEventListener(
+        "scroll",
+        () => {
+          window.clearTimeout(timer);
+          timer = window.setTimeout(sync, 90);
+        },
+        { passive: true }
       );
 
-      switcher.querySelectorAll("[data-swipe-index]").forEach((button, i) => {
-        const active = i === index;
-        button.classList.toggle("active", active);
-        button.setAttribute("aria-pressed", active ? "true" : "false");
-      });
-    };
+      sync();
+    });
+}
 
-    // 스크롤은 손가락 하나에 수십 번 뜬다. 멈춘 뒤에 한 번만 맞춘다.
-    let timer = null;
-    track.addEventListener(
-      "scroll",
-      () => {
-        window.clearTimeout(timer);
-        timer = window.setTimeout(sync, 90);
-      },
-      { passive: true }
-    );
+function nearestPanelIndex(track) {
+  const panels = [...track.children];
 
-    sync();
-  });
+  return panels.reduce(
+    (best, panel, i) =>
+      Math.abs(panel.offsetLeft - track.scrollLeft) <
+      Math.abs(panels[best].offsetLeft - track.scrollLeft)
+        ? i
+        : best,
+    0
+  );
 }
 
 function findSwipeSwitcher(track) {
