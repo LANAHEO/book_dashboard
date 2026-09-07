@@ -1236,6 +1236,35 @@ const KYOBO_RANK_MARGIN = 3;
 const KYOBO_WINDOW_MIN_RANK = 2 * KYOBO_RANK_MARGIN + 2;
 const KYOBO_HEAD_PAGE_SIZE = 20;
 
+// 그런데 창을 만들려고 붙인 page=2 가 형광펜이 안 켜지던 진짜 원인이었다.
+// 교보 실시간 페이지는 첫 쪽을 서버에서 그려 보낸다 — 파라미터가 없거나
+// page=1 이면 1~20위 제목이 HTML 안에 글자로 들어 있다. 확인한 그대로다:
+//
+//   /bestseller/realtime              1~20위가 본문 텍스트로 있음
+//   /bestseller/realtime?page=1&per=20 같음
+//   /bestseller/realtime?page=2&per=12 0건 — 서버 렌더링이 꺼진다
+//
+// 텍스트 조각은 문서가 다 뜨기 전에 찾을 글자가 있어야 켜진다. page=2 를 붙이는
+// 순간 목록이 통째로 브라우저 몫이 되어 조각이 찾을 것이 없었다. 그래서 20위
+// 안쪽이면 파라미터를 아예 붙이지 않는다.
+const KYOBO_REALTIME_SSR_RANKS = 20;
+
+function isKyoboRealtimeList(sourceUrl) {
+  return String(sourceUrl || "").split("?")[0].endsWith("/bestseller/realtime");
+}
+
+// 나머지 교보 목록(종합·분야, 실시간 21위 이하)은 어떤 주소로 불러도 목록이
+// HTML에 없다. 확인해 봤다 — 종합 주간도, 분야 일간·주간도, 파라미터를 빼도
+// 0건이다. 그 페이지에서는 형광펜이 켜질 수가 없다.
+//
+// 그래서 그때는 상품 페이지로 보낸다. 상품 페이지는 서버에서 그려 오고(제목이
+// HTML 안에 있다) 그 책 자체라, 목록에서 찾아 헤맬 일이 없다. 교보가 그 페이지에
+// 베스트 순위도 같이 적어 준다.
+function kyoboProductUrl(link) {
+  const id = extractStoreItemId("kyobo", link);
+  return id ? `https://product.kyobobook.co.kr/detail/${id}` : "";
+}
+
 function makeKyoboPageUrl(url, rank) {
   const pageUrl = new URL(url);
 
@@ -1367,7 +1396,13 @@ function buildRankListUrl(storeId, sourceUrl, rank, link = "", title = "") {
       } else if (storeId === "aladin") {
         pageUrl = makeAladinPageUrl(sourceUrl, Math.ceil(rankValue / 50));
       } else if (storeId === "kyobo") {
-        pageUrl = makeKyoboPageUrl(sourceUrl, rankValue);
+        // 서버가 그려 주는 자리면 파라미터 없이 보낸다. 그래야 조각이 켜진다.
+        if (isKyoboRealtimeList(sourceUrl) && rankValue <= KYOBO_REALTIME_SSR_RANKS) {
+          pageUrl = sourceUrl.split("?")[0];
+        } else {
+          // 목록에서는 형광펜이 켜질 수 없는 자리다. 그 책 페이지로 바로 보낸다.
+          pageUrl = kyoboProductUrl(link) || makeKyoboPageUrl(sourceUrl, rankValue);
+        }
       }
     }
   } catch (error) {
