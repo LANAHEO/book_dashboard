@@ -734,21 +734,21 @@ function renderFocusBoardV2() {
             // 타일도 칩과 같은 우선순위로 세운다: 주간 → 일간 → 분야별 → 실시간.
             // 예전에는 실시간·분야 둘만 있었는데, 우선순위가 가장 낮은 둘을
             // 카드에서 제일 크게 보여 주고 있던 셈이다.
-            const standardBest = (period) =>
-              bestAppearanceFor(
-                appearances,
-                (item) => item.group === "standard" && appearancePeriod(item) === period
-              );
-            const weeklyBest = standardBest("weekly");
-            const dailyBest = standardBest("daily");
+            //
+            // 기간 타일은 종합·분야를 가리지 않고 그 기간의 최고를 찾는다.
+            // 종합 목록으로 좁혔더니 추적 중인 15종 가운데 13종이 분야 순위에만
+            // 들어 있어서, 주간 23위인 책이 "순위권 밖"으로 보였다.
+            const periodBest = (period) =>
+              bestAppearanceFor(appearances, (item) => appearancePeriod(item) === period);
+            const weeklyBest = periodBest("weekly");
+            const dailyBest = periodBest("daily");
             const categoryBest = bestAppearanceFor(
               appearances,
               (item) => item.group === "category"
             );
-            const overallBest = bestAppearanceFor(
-              appearances,
-              (item) => item.group === "overall-realtime"
-            );
+            // 종합 실시간과 분야 실시간을 함께 본다. 종합 TOP 100에만 기대면
+            // 분야 실시간 3위인 책도 빈 칸이 된다.
+            const realtimeBest = periodBest("realtime");
 
             const droppedOut = renderDroppedOut(book);
             // 이번 수집에 없고 직전에는 있었다면 "진입 대기"가 아니라 이탈이다.
@@ -779,7 +779,7 @@ function renderFocusBoardV2() {
                   ${renderFocusRank("주간 최고", weeklyBest)}
                   ${renderFocusRank("일간 최고", dailyBest)}
                   ${renderFocusRank("분야 최고", categoryBest)}
-                  ${renderFocusRank("전체 실시간", overallBest)}
+                  ${renderFocusRank("실시간 최고", realtimeBest)}
                 </div>
                 <div class="focus-appearances">
                   ${shownAppearances
