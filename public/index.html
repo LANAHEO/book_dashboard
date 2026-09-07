@@ -27,7 +27,7 @@
             </div>
           </div>
           <p class="masthead-note">
-            아래 탭으로 상상스퀘어 도서 순위와 세 서점의 실시간·분야별·일간·주간 순위를 바꿔가며 봅니다.
+            아래 탭으로 상상스퀘어 도서 순위와 세 서점의 주간·일간·분야별·실시간 순위를 바꿔가며 봅니다.
           </p>
         </div>
         <div class="masthead-status">
@@ -39,12 +39,14 @@
 
       <section class="collect-status" id="collect-status" aria-label="서점별 데이터 수집 시점"></section>
 
+      <!-- 탭 순서는 우리가 정한 순위 우선순위다: 주간 → 일간 → 분야별 → 실시간.
+           상상스퀘어는 이 대시보드를 보는 이유라 그 앞에 둔다. -->
       <nav class="view-nav" aria-label="대시보드 화면 선택">
         <button type="button" data-view="focus" aria-current="true">상상스퀘어</button>
-        <button type="button" data-view="realtime">실시간</button>
-        <button type="button" data-view="category">분야별</button>
-        <button type="button" data-view="daily">일간</button>
         <button type="button" data-view="weekly">주간</button>
+        <button type="button" data-view="daily">일간</button>
+        <button type="button" data-view="category">분야별</button>
+        <button type="button" data-view="realtime">실시간</button>
       </nav>
 
       <section class="toolbar" aria-label="대시보드 필터">

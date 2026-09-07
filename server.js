@@ -2417,6 +2417,10 @@ function buildFocusBooks(sections, catalog = []) {
             listUrl: item.listUrl || "",
             group: list.group || "",
             categoryName: list.categoryName || "",
+            // 카드의 칩 순서를 주간→일간→분야별→실시간으로 세우려면 화면도
+            // 이 목록이 어느 기간인지 알아야 한다. 목록 이름만으로는 갈리지
+            // 않는다 — 예스24 일간은 이름이 "일별 베스트셀러"다.
+            period: list.period || "",
             realtime: Boolean(list.realtime),
             rank: item.rank,
             title: item.title,
@@ -2591,7 +2595,8 @@ async function loadSource(id, options = {}) {
 //   collectedAt  우리가 서점에서 가져온 시각
 //   sourceStamp  서점이 스스로 밝힌 그 순위의 기준 시점
 //   cadence      서점이 무엇을 단위로 집계하는지
-const STATUS_PERIOD_ORDER = ["realtime", "daily", "weekly", "monthly"];
+// 화면 전체가 쓰는 순위 우선순위와 같은 순서다: 주간 → 일간 → 월간 → 실시간.
+const STATUS_PERIOD_ORDER = ["weekly", "daily", "monthly", "realtime"];
 
 function buildStoreStatus(sections) {
   return sections.map((section) => {

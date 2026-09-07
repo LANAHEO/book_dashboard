@@ -8,8 +8,11 @@ const state = {
   refreshTimer: null,
   badgeResetTimer: null,
   hasLoadedOnce: false,
-  mobileRealtimeStore: "kyobo",
-  categoryPeriod: "realtime",
+  mobileRealtimeStore: "kyobo",
+
+  // 분야별 화면도 주간부터 연다. 교보는 분야별 실시간을 아예 내주지 않아서
+  // 실시간으로 열면 첫 화면이 두 서점짜리가 된다.
+  categoryPeriod: "weekly",
   // 분야는 서점을 가로지르는 묶음 키로 고른다(예: "economy").
   categoryGroup: "",
   rankPages: {},
@@ -59,17 +62,19 @@ const STORE_ALERT_ORDER = ["kyobo", "yes24", "aladin"];
 const RANK_PAGE_SIZE = 20;
 const FOCUS_APPEARANCE_LIMIT = 6;
 const FOCUS_DROPPED_LIMIT = 4;
+// 기간 순서는 화면 어디서나 같다: 주간 → 일간 → 실시간. 분야별 화면의
+// 기간 단추도 이 순서를 따르고, 첫 단추가 기본값이 된다.
 const CATEGORY_PERIODS = [
-  { key: "realtime", label: "실시간" },
+  { key: "weekly", label: "주간" },
   { key: "daily", label: "일간" },
-  { key: "weekly", label: "주간" }
+  { key: "realtime", label: "실시간" }
 ];
 const VIEW_LABELS = {
   focus: "상상스퀘어 도서 순위",
-  realtime: "전체 실시간 TOP 100",
-  category: "분야별 순위",
+  weekly: "전체 서점 주간 순위",
   daily: "전체 서점 일간 순위",
-  weekly: "전체 서점 주간 순위"
+  category: "분야별 순위",
+  realtime: "전체 실시간 TOP 100"
 };
 
 function escapeHtml(value) {
@@ -162,15 +167,42 @@ function getVisibleFocusBooks() {
   );
 }
 
-// 카드는 노출을 묶음·순위로 정렬해 앞에서 여섯 개만, 이탈은 네 개만 그린다.
+// 칩 순서는 순위 종류로 먼저 정한다: 주간 → 일간 → 월간 → 분야별 → 실시간.
+// 순위 숫자는 같은 종류 안에서만 견준다. 숫자를 앞세우면 종류가 뒤섞여
+// 나오는데, 어느 순위인지가 몇 위인지보다 먼저 읽혀야 하는 화면이다.
+// 분야별 안에서도 같은 기간 순서를 쓴다.
+const APPEARANCE_GROUP_BASE = { standard: 0, category: 10, "overall-realtime": 20 };
+const APPEARANCE_PERIOD_ORDER = { weekly: 0, daily: 1, monthly: 2, realtime: 3 };
+
+// 배포 직전에 캐시된 응답에는 period가 없다. 그때는 목록 이름에서 읽는다 —
+// 이름에도 없으면 제 묶음의 맨 뒤에 세운다(순서만 늦어지고 빠지지는 않는다).
+function appearancePeriod(item) {
+  if (item.period) {
+    return item.period;
+  }
+
+  const name = String(item.listName || "");
+
+  if (name.includes("주간")) return "weekly";
+  if (name.includes("일간") || name.includes("일별")) return "daily";
+  if (name.includes("월간")) return "monthly";
+
+  return item.realtime ? "realtime" : "";
+}
+
+function appearanceOrder(item) {
+  const base = APPEARANCE_GROUP_BASE[item.group] ?? 30;
+
+  return base + (APPEARANCE_PERIOD_ORDER[appearancePeriod(item)] ?? 8);
+}
+
+// 카드는 노출을 위 순서로 정렬해 앞에서 여섯 개만, 이탈은 네 개만 그린다.
 // 요약도 이 두 함수를 지나가게 해서, 세는 것과 그리는 것이 같은 목록이 되게 한다.
 function visibleAppearances(book) {
-  const groupOrder = { "overall-realtime": 0, category: 1, standard: 2 };
-
   return [...(book.appearances || [])]
     .sort(
       (a, b) =>
-        (groupOrder[a.group] ?? 9) - (groupOrder[b.group] ?? 9) ||
+        appearanceOrder(a) - appearanceOrder(b) ||
         getRankValue(a.rank) - getRankValue(b.rank)
     )
     .slice(0, FOCUS_APPEARANCE_LIMIT);
@@ -699,13 +731,23 @@ function renderFocusBoardV2() {
             const appearances = book.appearances || [];
             // 칩으로 그리는 건 이 중 앞쪽 일부다. 노출 개수와 최고 순위는 전부를 본다.
             const shownAppearances = visibleAppearances(book);
-            const overallBest = bestAppearanceFor(
-              appearances,
-              (item) => item.group === "overall-realtime"
-            );
+            // 타일도 칩과 같은 우선순위로 세운다: 주간 → 일간 → 분야별 → 실시간.
+            // 예전에는 실시간·분야 둘만 있었는데, 우선순위가 가장 낮은 둘을
+            // 카드에서 제일 크게 보여 주고 있던 셈이다.
+            const standardBest = (period) =>
+              bestAppearanceFor(
+                appearances,
+                (item) => item.group === "standard" && appearancePeriod(item) === period
+              );
+            const weeklyBest = standardBest("weekly");
+            const dailyBest = standardBest("daily");
             const categoryBest = bestAppearanceFor(
               appearances,
               (item) => item.group === "category"
+            );
+            const overallBest = bestAppearanceFor(
+              appearances,
+              (item) => item.group === "overall-realtime"
             );
 
             const droppedOut = renderDroppedOut(book);
@@ -734,8 +776,10 @@ function renderFocusBoardV2() {
                     : escapeHtml(book.title)}
                 </h3>
                 <div class="focus-rank-grid">
-                  ${renderFocusRank("전체 실시간", overallBest)}
+                  ${renderFocusRank("주간 최고", weeklyBest)}
+                  ${renderFocusRank("일간 최고", dailyBest)}
                   ${renderFocusRank("분야 최고", categoryBest)}
+                  ${renderFocusRank("전체 실시간", overallBest)}
                 </div>
                 <div class="focus-appearances">
                   ${shownAppearances
@@ -996,7 +1040,7 @@ function renderCategoryBoard(lists) {
   const activeLists = sortByStoreOrder(
     shownLists.filter((list) => list.period === state.categoryPeriod)
   ).map(withLoadedItems);
-
+
   // 지금 분야를 받아 두고, 좌우 이웃도 한가할 때 미리 당긴다.
   // 분야는 좌우로 훑어 보는 자리라 다음에 누를 것이 대개 옆에 있다.
   if (activeLists.some((list) => list.pendingItems)) {
