@@ -1498,6 +1498,12 @@ a {
   display: none;
 }
 
+/* 서점 이름표는 옆으로 넘기는 화면에서만 쓸모가 있다. PC는 세 서점이 이미
+   나란히 보이므로 그대로 둔다. */
+.swipe-switcher {
+  display: none;
+}
+
 .realtime-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -2058,24 +2064,56 @@ a.focus-chip:hover {
     font-size: 23px;
   }
 
-  .realtime-board > .store-switcher {
+  .realtime-board > .store-switcher,
+  .swipe-switcher {
     display: flex;
   }
 
-  .realtime-grid,
-  .focus-grid,
-  .standard-grid {
+  .focus-grid {
     grid-template-columns: 1fr;
   }
 
-  .realtime-store-card,
-  .realtime-store-card:last-child {
-    display: none;
-    grid-column: auto;
+  /* 모바일에서는 서점을 손으로 옆으로 넘겨 본다.
+     세로로 쌓으면 서점 하나를 지나가는 데만 100줄을 스크롤해야 하고,
+     실시간은 그걸 피하려고 단추로 갈아 끼우고 있었다 — 단추를 누르기 전에는
+     옆 서점이 있는지도 보이지 않는다.
+
+     스크롤 스냅으로 만든다. 브라우저가 직접 손가락을 따라가고 관성까지 붙어서,
+     터치 이벤트를 우리가 흉내 내는 것보다 훨씬 자연스럽다. 자바스크립트는
+     단추와 위치를 맞추는 데만 쓴다. */
+  .realtime-grid,
+  .standard-grid {
+    display: flex;
+    grid-template-columns: none;
+    gap: 12px;
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+    /* 카드 그림자가 잘리지 않게 위아래로 숨 쉴 자리를 준다. */
+    padding-bottom: 4px;
   }
 
-  .realtime-store-card.mobile-active {
+  .realtime-grid::-webkit-scrollbar,
+  .standard-grid::-webkit-scrollbar {
+    display: none;
+  }
+
+  .realtime-grid > *,
+  .standard-grid > * {
+    flex: 0 0 100%;
+    min-width: 0;
+    scroll-snap-align: start;
+    scroll-snap-stop: always;
+  }
+
+  /* 단추로 갈아 끼우던 방식을 걷어낸다. 이제 세 서점이 모두 자리에 있고,
+     안 보이는 것은 화면 밖에 있을 뿐이다. */
+  .realtime-store-card,
+  .realtime-store-card:last-child {
     display: block;
+    grid-column: auto;
   }
 
   .focus-card:last-child {
@@ -2783,6 +2821,25 @@ a.focus-chip:focus-visible {
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 6px;
     overflow-x: visible;
+  }
+
+  /* 주간 화면은 칸이 넷이다(교보가 종합·온라인 둘). 세 칸으로 못 박으면 넷째가
+     아랫줄로 떨어져 이름표 한 줄이 두 줄이 된다. 개수만큼 한 줄에 편다. */
+  .swipe-switcher {
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(0, 1fr);
+    grid-template-columns: none;
+  }
+
+  /* 이름이 접히면 그 칸만 키가 커져 줄이 울퉁불퉁해진다. 한 줄로 붙들고
+     넘치면 말줄임으로 끝낸다. */
+  .swipe-switcher .store-switcher-button {
+    display: block;
+    overflow: hidden;
+    padding: 0 6px;
+    line-height: 42px;
+    white-space: nowrap;
+    text-overflow: ellipsis;
   }
 
   .store-switcher-button {

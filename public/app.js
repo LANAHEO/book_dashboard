@@ -8,7 +8,6 @@ const state = {
   refreshTimer: null,
   badgeResetTimer: null,
   hasLoadedOnce: false,
-  mobileRealtimeStore: "kyobo",
 
   // 분야별 화면도 주간부터 연다. 교보는 분야별 실시간을 아예 내주지 않아서
   // 실시간으로 열면 첫 화면이 두 서점짜리가 된다.
@@ -407,7 +406,7 @@ function renderCard(list) {
   const typeLabel = list.typeLabel || (list.realtime ? "실시간" : "베스트");
 
   return `
-    <article class="${classNames}"${panelStyle}>
+    <article class="${classNames}"${panelStyle} data-store-id="${escapeHtml(list.storeId || "")}">
       <div class="panel-head">
         <div>
           <div class="panel-title-line">
@@ -810,6 +809,53 @@ function renderFocusBoardV2() {
   `;
 }
 
+// 모바일에서 서점 사이를 옆으로 넘겨 보는 자리의 이름표다. 손가락으로 밀어도
+// 되고 여기를 눌러도 된다 — 누르면 그 서점 자리로 미끄러진다. 화면을 다시 그리지
+// 않고 스크롤만 옮기므로, 보고 있던 순위 구간이 그대로 남는다.
+// 이름표는 칸 순서로 가리킨다. 서점 id로 찾으면 주간 화면이 어긋난다 —
+// 거기서는 교보 목록이 둘(종합 주간, 온라인 주간)이라 같은 id가 두 번 나온다.
+// 그때는 이름도 서점명 대신 목록을 가르는 말로 바꾼다.
+function swipeLabel(list, lists) {
+  const sameStore = lists.filter((other) => other.storeId === list.storeId);
+
+  if (sameStore.length < 2) {
+    return list.storeName;
+  }
+
+  // 서점명까지 붙이면 "교보 온라인"이 되어 좁은 화면에서 두 줄로 접힌다.
+  // 가르는 말만 남긴다 — 어느 서점 것인지는 바로 아래 패널 머리글에 적혀 있다.
+  const distinct = String(list.name || "").trim().split(/\s+/)[0];
+
+  return distinct || list.storeName;
+}
+
+function renderSwipeSwitcher(lists, label) {
+  if (lists.length < 2) {
+    return "";
+  }
+
+  return `
+    <div class="store-switcher swipe-switcher" aria-label="${escapeHtml(label)}">
+      ${lists
+        .map(
+          (list, index) => `
+            <button
+              type="button"
+              class="store-switcher-button ${index === 0 ? "active" : ""}"
+              data-swipe-index="${index}"
+              aria-pressed="${index === 0 ? "true" : "false"}"
+              style="--switch-accent:${escapeHtml(list.accent)}"
+            >
+              ${escapeHtml(swipeLabel(list, lists))}
+              <span>${escapeHtml(list.typeLabel || "TOP 100")}</span>
+            </button>
+          `
+        )
+        .join("")}
+    </div>
+  `;
+}
+
 function renderStoreSwitcher(
   lists,
   selectedStore,
@@ -844,10 +890,6 @@ function renderRealtimeBoard(lists) {
     return "";
   }
 
-  if (!lists.some((list) => list.storeId === state.mobileRealtimeStore)) {
-    state.mobileRealtimeStore = lists[0].storeId;
-  }
-
   const totalCollected = lists.reduce((sum, list) => sum + (list.itemCount || 0), 0);
 
   return `
@@ -863,17 +905,12 @@ function renderRealtimeBoard(lists) {
           <span>권 수집</span>
         </div>
       </div>
-      ${renderStoreSwitcher(
-        lists,
-        state.mobileRealtimeStore,
-        "data-mobile-realtime-store",
-        "모바일 실시간 서점 선택"
-      )}
+      ${renderSwipeSwitcher(lists, "실시간 서점 넘겨 보기")}
       <div class="realtime-grid">
         ${lists
           .map(
             (list) => `
-              <div class="realtime-store-card ${state.mobileRealtimeStore === list.storeId ? "mobile-active" : ""}">
+              <div class="realtime-store-card" data-store-id="${escapeHtml(list.storeId)}">
                 ${renderCard(list)}
               </div>
             `
@@ -1108,6 +1145,7 @@ function renderCategoryBoard(lists) {
           )
           .join("")}
       </div>
+      ${renderSwipeSwitcher(activeLists, "분야별 서점 넘겨 보기")}
       <div class="standard-grid">
         ${activeLists.map(renderCard).join("")}
       </div>
@@ -1146,12 +1184,14 @@ function renderOverallPeriodBoard(lists, options) {
           <span>권 수집</span>
         </div>
       </div>
+      ${renderSwipeSwitcher(sortByStoreOrder(lists), `${title} 서점 넘겨 보기`)}
       <div class="standard-grid">
         ${sortByStoreOrder(lists).map(renderCard).join("")}
       </div>
       ${extraLists.length
         ? `
           <div class="board-subheading">${escapeHtml(extraTitle)}</div>
+          ${renderSwipeSwitcher(sortByStoreOrder(extraLists), `${extraTitle} 서점 넘겨 보기`)}
           <div class="standard-grid">
             ${sortByStoreOrder(extraLists).map(renderCard).join("")}
           </div>
@@ -1349,7 +1389,75 @@ function renderDashboard() {
   renderStoreStatus();
   renderStoreFilters(state.dashboard.sections);
   elements.dashboard.innerHTML = renderDashboardSections(visibleSections);
+  wireSwipeTracks();
   updateSummary();
+}
+
+// 넘기는 것 자체는 브라우저가 한다(styles.css의 scroll-snap). 여기서는 지금 어느
+// 서점을 보고 있는지 이름표에 표시만 맞춘다. 화면을 다시 그리면 요소가 통째로
+// 바뀌므로 그릴 때마다 다시 건다.
+function wireSwipeTracks() {
+  elements.dashboard.querySelectorAll(".realtime-grid, .standard-grid").forEach((track) => {
+    const switcher = findSwipeSwitcher(track);
+
+    if (!switcher) {
+      return;
+    }
+
+    const sync = () => {
+      // 가로로 못 넘기는 화면(데스크톱)에서는 이름표 자체가 숨겨져 있다.
+      if (track.scrollWidth <= track.clientWidth + 1) {
+        return;
+      }
+
+      const panels = [...track.children];
+      const index = panels.reduce(
+        (best, panel, i) =>
+          Math.abs(panel.offsetLeft - track.scrollLeft) <
+          Math.abs(panels[best].offsetLeft - track.scrollLeft)
+            ? i
+            : best,
+        0
+      );
+
+      switcher.querySelectorAll("[data-swipe-index]").forEach((button, i) => {
+        const active = i === index;
+        button.classList.toggle("active", active);
+        button.setAttribute("aria-pressed", active ? "true" : "false");
+      });
+    };
+
+    // 스크롤은 손가락 하나에 수십 번 뜬다. 멈춘 뒤에 한 번만 맞춘다.
+    let timer = null;
+    track.addEventListener(
+      "scroll",
+      () => {
+        window.clearTimeout(timer);
+        timer = window.setTimeout(sync, 90);
+      },
+      { passive: true }
+    );
+
+    sync();
+  });
+}
+
+function findSwipeSwitcher(track) {
+  let node = track.previousElementSibling;
+
+  while (node) {
+    if (node.classList && node.classList.contains("swipe-switcher")) {
+      return node;
+    }
+    // 월간 구역처럼 사이에 소제목이 끼는 경우가 있다. 이름표를 지나 다른 목록에
+    // 닿으면 그 위는 남의 것이므로 멈춘다.
+    if (node.classList && (node.classList.contains("standard-grid") || node.classList.contains("realtime-grid"))) {
+      return null;
+    }
+    node = node.previousElementSibling;
+  }
+
+  return null;
 }
 
 function setLoading(loading) {
@@ -1478,10 +1586,17 @@ function bindEvents() {
       return;
     }
 
-    const realtimeStoreButton = event.target.closest("[data-mobile-realtime-store]");
-    if (realtimeStoreButton) {
-      state.mobileRealtimeStore = realtimeStoreButton.dataset.mobileRealtimeStore;
-      renderDashboard();
+    // 서점 이름표를 누르면 그 자리로 미끄러진다. 다시 그리지 않으므로 보고 있던
+    // 순위 구간(21~40위 같은)이 그대로 남는다.
+    const swipeButton = event.target.closest("[data-swipe-index]");
+    if (swipeButton) {
+      const switcher = swipeButton.closest(".swipe-switcher");
+      const track = switcher && switcher.nextElementSibling;
+      const panel = track && track.children[Number(swipeButton.dataset.swipeIndex)];
+
+      if (panel) {
+        track.scrollTo({ left: panel.offsetLeft, behavior: "smooth" });
+      }
       return;
     }
 
