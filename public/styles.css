@@ -2741,6 +2741,37 @@ a.focus-chip:focus-visible {
   margin-top: 4px;
 }
 
+/* 수집 시점도 서점 셋이다. 세로로 쌓으면 표 세 장이 첫 화면을 통째로 먹어서
+   접어 두고 있었는데, 옆으로 넘기면 펼쳐 둔 채로도 한 장 높이면 된다. */
+@media (max-width: 820px) {
+  .cs-box .cs-grid {
+    display: flex;
+    grid-template-columns: none;
+    gap: 10px;
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+    margin-top: 8px;
+  }
+
+  .cs-box .cs-grid::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* 한 장씩 넘기므로 위 칸과 가르던 윗줄 대신 각자 테두리를 갖는다. */
+  .cs-box .cs-card {
+    flex: 0 0 100%;
+    min-width: 0;
+    scroll-snap-align: start;
+    scroll-snap-stop: always;
+    border: 1px solid var(--line-soft);
+    border-radius: 12px;
+    padding: 12px 13px 4px;
+  }
+}
+
 @media (min-width: 821px) {
   /* 넓은 화면에서는 세 장을 나란히 두고 각 카드가 다시 경계를 갖는다. */
   .cs-box .cs-grid {

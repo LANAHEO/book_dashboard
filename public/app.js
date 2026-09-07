@@ -874,7 +874,7 @@ function renderSwipeSwitcher(lists, label) {
               style="--switch-accent:${escapeHtml(list.accent)}"
             >
               ${escapeHtml(swipeLabel(list, lists))}
-              <span>${escapeHtml(list.typeLabel || "TOP 100")}</span>
+              ${list.typeLabel ? `<span>${escapeHtml(list.typeLabel)}</span>` : ""}
             </button>
           `
         )
@@ -1391,6 +1391,7 @@ function renderStoreStatus() {
         왼쪽은 <strong>서점이 그 순위를 언제 기준으로 집계했는지</strong>,
         오른쪽은 <strong>우리가 그것을 언제 가져왔는지</strong>입니다. 둘은 다른 값입니다.
       </p>
+      ${renderSwipeSwitcher(stores, "수집 시점 서점 넘겨 보기")}
       <div class="cs-grid">${cards}</div>
     </details>
   `;
@@ -1400,8 +1401,13 @@ function renderStoreStatus() {
   if (box) {
     box.addEventListener("toggle", () => {
       state.collectStatusOpen = box.open;
+      // 접혀 있는 동안에는 폭이 0이라 어느 칸을 보고 있는지 잴 수 없다.
+      // 펼치는 순간 다시 맞춘다.
+      wireSwipeTracks(elements.collectStatus);
     });
   }
+
+  wireSwipeTracks(elements.collectStatus);
 }
 
 function renderDashboard() {
@@ -1423,9 +1429,13 @@ function renderDashboard() {
 // 넘기는 것 자체는 브라우저가 한다(styles.css의 scroll-snap). 여기서는 지금 어느
 // 서점을 보고 있는지 이름표에 표시만 맞춘다. 화면을 다시 그리면 요소가 통째로
 // 바뀌므로 그릴 때마다 다시 건다.
-function wireSwipeTracks() {
-  elements.dashboard
-    .querySelectorAll(".realtime-grid, .standard-grid, .focus-grid")
+function wireSwipeTracks(root = elements.dashboard) {
+  if (!root) {
+    return;
+  }
+
+  root
+    .querySelectorAll(".realtime-grid, .standard-grid, .focus-grid, .cs-grid")
     .forEach((track) => {
       const switcher = findSwipeSwitcher(track);
       // 상상스퀘어는 칸이 스무 개가 넘어 이름표를 달 수 없다. 대신 몇 번째를
@@ -1470,19 +1480,45 @@ function wireSwipeTracks() {
         }
       };
 
-      // 스크롤은 손가락 하나에 수십 번 뜬다. 멈춘 뒤에 한 번만 맞춘다.
-      let timer = null;
-      track.addEventListener(
-        "scroll",
-        () => {
-          window.clearTimeout(timer);
-          timer = window.setTimeout(() => sync(true), 90);
-        },
-        { passive: true }
-      );
+      // 접었다 펼 때 같은 요소에 다시 걸릴 수 있다. 스크롤 감시는 한 번만 건다.
+      if (track.dataset.swipeWired !== "1") {
+        track.dataset.swipeWired = "1";
+
+        // 스크롤은 손가락 하나에 수십 번 뜬다. 멈춘 뒤에 한 번만 맞춘다.
+        let timer = null;
+        track.addEventListener(
+          "scroll",
+          () => {
+            window.clearTimeout(timer);
+            timer = window.setTimeout(() => sync(true), 90);
+          },
+          { passive: true }
+        );
+      }
 
       sync(false);
     });
+}
+
+// 서점 이름표를 누르면 그 자리로 미끄러진다. 다시 그리지 않으므로 보고 있던
+// 순위 구간(21~40위 같은)이 그대로 남는다. 수집 시점 표는 #dashboard 바깥에
+// 있어서, 같은 처리를 두 곳에 걸어 준다.
+function handleSwipeButtonClick(event) {
+  const button = event.target.closest("[data-swipe-index]");
+
+  if (!button) {
+    return false;
+  }
+
+  const switcher = button.closest(".swipe-switcher");
+  const track = switcher && switcher.nextElementSibling;
+  const panel = track && track.children[Number(button.dataset.swipeIndex)];
+
+  if (panel) {
+    track.scrollTo({ left: panel.offsetLeft, behavior: "smooth" });
+  }
+
+  return true;
 }
 
 function nearestPanelIndex(track) {
@@ -1622,6 +1658,13 @@ function bindEvents() {
     renderDashboard();
   });
 
+  elements.collectStatus?.addEventListener("click", (event) => {
+    if (handleSwipeButtonClick(event)) {
+      // 이름표는 <summary> 밖이지만, 눌렀을 때 표가 접히지 않게 막아 둔다.
+      event.preventDefault();
+    }
+  });
+
   elements.storeFilters.addEventListener("click", (event) => {
     const target = event.target.closest("[data-store-filter]");
     if (!target) {
@@ -1642,17 +1685,7 @@ function bindEvents() {
       return;
     }
 
-    // 서점 이름표를 누르면 그 자리로 미끄러진다. 다시 그리지 않으므로 보고 있던
-    // 순위 구간(21~40위 같은)이 그대로 남는다.
-    const swipeButton = event.target.closest("[data-swipe-index]");
-    if (swipeButton) {
-      const switcher = swipeButton.closest(".swipe-switcher");
-      const track = switcher && switcher.nextElementSibling;
-      const panel = track && track.children[Number(swipeButton.dataset.swipeIndex)];
-
-      if (panel) {
-        track.scrollTo({ left: panel.offsetLeft, behavior: "smooth" });
-      }
+    if (handleSwipeButtonClick(event)) {
       return;
     }
 
