@@ -2864,23 +2864,28 @@ a.focus-chip:focus-visible {
     overflow-x: visible;
   }
 
-  /* 주간 화면은 칸이 넷이다(교보가 종합·온라인 둘). 세 칸으로 못 박으면 넷째가
-     아랫줄로 떨어져 이름표 한 줄이 두 줄이 된다. 개수만큼 한 줄에 편다. */
+  /* 다른 이름표들은 서점 셋을 3등분해 놓으면 되지만, 이 줄은 칸 수가 화면마다
+     다르고(주간은 교보가 종합·온라인 둘이라 넷) 이름 길이도 제각각이다.
+     "교보문고 온라인"을 4등분한 칸에 넣으면 잘린다. 그래서 등분하지 않고
+     글자 길이대로 두고, 넘치면 이 줄만 옆으로 밀어 볼 수 있게 한다. */
   .swipe-switcher {
-    grid-auto-flow: column;
-    grid-auto-columns: minmax(0, 1fr);
+    display: flex;
     grid-template-columns: none;
+    gap: 4px;
+    overflow-x: auto;
+    scrollbar-width: none;
   }
 
-  /* 이름이 접히면 그 칸만 키가 커져 줄이 울퉁불퉁해진다. 한 줄로 붙들고
-     넘치면 말줄임으로 끝낸다. */
+  .swipe-switcher::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* 이름이 접히면 그 칸만 키가 커져 줄이 울퉁불퉁해진다. 한 줄로 붙든다. */
   .swipe-switcher .store-switcher-button {
-    display: block;
-    overflow: hidden;
-    padding: 0 6px;
+    flex: 0 0 auto;
+    padding: 0 9px;
     line-height: 42px;
     white-space: nowrap;
-    text-overflow: ellipsis;
   }
 
   .store-switcher-button {

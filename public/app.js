@@ -822,11 +822,11 @@ function swipeLabel(list, lists) {
     return list.storeName;
   }
 
-  // 서점명까지 붙이면 "교보 온라인"이 되어 좁은 화면에서 두 줄로 접힌다.
-  // 가르는 말만 남긴다 — 어느 서점 것인지는 바로 아래 패널 머리글에 적혀 있다.
+  // 서점명을 그대로 두고 가르는 말을 뒤에 붙인다 — "교보문고 종합", "교보문고 온라인".
+  // 가르는 말만 남기면 짧기는 한데, 그 둘이 어느 서점 것인지가 이름표에서 사라진다.
   const distinct = String(list.name || "").trim().split(/\s+/)[0];
 
-  return distinct || list.storeName;
+  return distinct ? `${list.storeName} ${distinct}` : list.storeName;
 }
 
 function renderSwipeSwitcher(lists, label) {
