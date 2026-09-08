@@ -59,8 +59,29 @@ const WATCH_PUBLISHER_NAME = "상상스퀘어";
 const WATCH_PUBLISHER_KEY = WATCH_PUBLISHER_NAME.replace(/\s+/g, "").toLowerCase();
 const STORE_ALERT_ORDER = ["kyobo", "yes24", "aladin"];
 const RANK_PAGE_SIZE = 20;
-const FOCUS_APPEARANCE_LIMIT = 6;
 const FOCUS_DROPPED_LIMIT = 4;
+
+// 상상스퀘어 카드의 네모·바 칸 순서. 세 칸이 어느 카드에서나 같은 순서로
+// 서고, 위쪽 네모가 서점 이름을 달고 있어서, 아래 바의 숫자는 몇 번째
+// 칸에 있는지만으로 어느 서점 것인지 읽힌다.
+const FOCUS_STORE_COLUMNS = [
+  { id: "kyobo", label: "교보" },
+  { id: "yes24", label: "예스" },
+  { id: "aladin", label: "알라딘" }
+];
+
+// 바 네 줄. 종합과 분야를 갈라 둔다 — 예전 타일은 한 기간의 최고를 종합·분야
+// 가리지 않고 하나로 보여 줬는데, 그러면 "주간 23위"가 종합인지 분야인지
+// 카드에서 알 수 없었다.
+const FOCUS_BAR_ROWS = [
+  { key: "weekly-standard", label: "주간종합순위", group: "standard", period: "weekly" },
+  { key: "daily-standard", label: "일간종합순위", group: "standard", period: "daily" },
+  { key: "weekly-category", label: "주간분야순위", group: "category", period: "weekly" },
+  { key: "daily-category", label: "일간분야순위", group: "category", period: "daily" }
+];
+
+// 바 길이를 정하는 기준. 서점 목록이 TOP 100이라 100위가 바닥이다.
+const FOCUS_BAR_SCALE = 100;
 // 기간 순서는 화면 어디서나 같다: 주간 → 일간 → 실시간. 분야별 화면의
 // 기간 단추도 이 순서를 따르고, 첫 단추가 기본값이 된다.
 const CATEGORY_PERIODS = [
@@ -215,16 +236,12 @@ function appearanceOrder(item) {
   return base + (APPEARANCE_PERIOD_ORDER[appearancePeriod(item)] ?? 8);
 }
 
-// 카드는 노출을 위 순서로 정렬해 앞에서 여섯 개만, 이탈은 네 개만 그린다.
-// 요약도 이 두 함수를 지나가게 해서, 세는 것과 그리는 것이 같은 목록이 되게 한다.
-function visibleAppearances(book) {
-  return [...(book.appearances || [])]
-    .sort(
-      (a, b) =>
-        appearanceOrder(a) - appearanceOrder(b) ||
-        getRankValue(a.rank) - getRankValue(b.rank)
-    )
-    .slice(0, FOCUS_APPEARANCE_LIMIT);
+function sortAppearances(items) {
+  return [...items].sort(
+    (a, b) =>
+      appearanceOrder(a) - appearanceOrder(b) ||
+      getRankValue(a.rank) - getRankValue(b.rank)
+  );
 }
 
 function visibleDropouts(book) {
@@ -521,6 +538,82 @@ function bestAppearanceFor(appearances, predicate) {
   );
 }
 
+// 카드 한 장에 그릴 것을 한 번에 정한다. 요약도 이 결과를 세게 해서, 화면에
+// 없는 노출이 요약 숫자에만 들어가는 일이 없게 한다.
+function focusCardPlan(book) {
+  const appearances = book.appearances || [];
+  const storeBest = (storeId, predicate) =>
+    bestAppearanceFor(
+      appearances,
+      (item) => item.storeId === storeId && predicate(item)
+    );
+
+  const isCategoryRealtime = (item) =>
+    item.group === "category" && appearancePeriod(item) === "realtime";
+
+  // 첫째 줄: 서점별 종합 실시간.
+  const liveBoxes = FOCUS_STORE_COLUMNS.map((store) => ({
+    store,
+    qualifier: "종합 실시간",
+    appearance: storeBest(store.id, (item) => item.group === "overall-realtime")
+  }));
+
+  // 둘째 줄: 분야명 + 예스·알라딘 분야 실시간. 첫 칸이 교보가 아닌 이유는
+  // 교보가 분야 실시간을 따로 내주지 않기 때문이다 — 그 자리에 이 책이 어느
+  // 분야에서 겨루는지를 적어, 옆 두 칸의 숫자가 무슨 분야 순위인지 밝힌다.
+  const categoryBoxes = [
+    { kind: "name", value: focusCategoryName(appearances) },
+    ...["yes24", "aladin"].map((storeId) => {
+      const store = FOCUS_STORE_COLUMNS.find((entry) => entry.id === storeId);
+
+      return {
+        store,
+        qualifier: "분야 실시간",
+        appearance: storeBest(storeId, isCategoryRealtime)
+      };
+    })
+  ];
+
+  const bars = FOCUS_BAR_ROWS.map((row) => ({
+    row,
+    cells: FOCUS_STORE_COLUMNS.map((store) => ({
+      store,
+      appearance: storeBest(
+        store.id,
+        (item) => item.group === row.group && appearancePeriod(item) === row.period
+      )
+    }))
+  }));
+
+  const drawn = new Set();
+  [...liveBoxes, ...categoryBoxes].forEach(
+    (box) => box.appearance && drawn.add(box.appearance)
+  );
+  bars.forEach((bar) =>
+    bar.cells.forEach((cell) => cell.appearance && drawn.add(cell.appearance))
+  );
+
+  return { liveBoxes, categoryBoxes, bars, drawn: [...drawn] };
+}
+
+// 분야명은 서점마다 다르게 적는다(경제/경영, 경제 경영, 경제경영). 하나만
+// 골라야 하므로 칸 순서와 같은 우선순위로 교보 → 예스 → 알라딘에서 찾는다.
+function focusCategoryName(appearances) {
+  const categories = sortAppearances(
+    appearances.filter((item) => item.group === "category" && item.categoryName)
+  );
+
+  for (const store of FOCUS_STORE_COLUMNS) {
+    const match = categories.find((item) => item.storeId === store.id);
+
+    if (match) {
+      return match.categoryName;
+    }
+  }
+
+  return "";
+}
+
 // 순위 타일에 그 서점 색을 얹기 위한 값. 팔레트는 styles.css의 토큰이 원본이고
 // 여기서는 그 토큰을 가리키기만 한다 — 색을 두 곳에 적어 두면 갈라진다.
 const STORE_ACCENT_VAR = {
@@ -534,29 +627,119 @@ function storeAccentStyle(storeId) {
   return accent ? ` style="--store-accent:${accent}"` : "";
 }
 
-function renderFocusRank(label, appearance) {
+// 서점 필터로 감춘 칸과 순위에 없는 칸은 다른 사실이다. 둘을 같은 말로
+// 적으면 교보만 골라 본 사람에게 예스24가 순위권 밖이라고 거짓말하게 된다.
+function isStoreHidden(storeId) {
+  return state.selectedStore !== "all" && state.selectedStore !== storeId;
+}
+
+// 카드 맨 위 네모 셋: 서점별 종합 실시간. 지금 이 순간의 순위라 오늘 무슨
+// 일이 일어났는지 여기서 먼저 읽힌다.
+// 분야명 칸. 교보가 분야 실시간을 따로 내주지 않아 비는 자리에, 옆 두 칸이
+// 무슨 분야 순위인지를 적는다.
+function renderFocusCategoryNameBox(name) {
+  return `
+    <div class="focus-live-box is-name${name ? "" : " is-empty"}">
+      <span class="focus-live-label"><span class="focus-live-store">분야</span>실시간 기준</span>
+      <strong>${escapeHtml(name || "분야 없음")}</strong>
+    </div>
+  `;
+}
+
+function renderFocusLiveBox(store, qualifier, appearance) {
+  // 이름표는 두 줄로 못 박아 둔다. "알라딘 종합 실시간"을 한 줄에 넣으면
+  // 모바일 카드 폭(화면의 88%)에서 말줄임으로 잘리고, 서점마다 줄 수가
+  // 달라지면 세 네모의 순위 숫자가 서로 다른 높이에 선다.
+  const label = `<span class="focus-live-label"><span class="focus-live-store">${escapeHtml(
+    store.label
+  )}</span>${escapeHtml(qualifier)}</span>`;
+  const accent = storeAccentStyle(store.id);
+
   if (!appearance) {
+    const hidden = isStoreHidden(store.id);
+
     return `
-      <div class="focus-rank-metric muted">
-        <span>${escapeHtml(label)}</span>
-        <strong>순위권 밖</strong>
+      <div class="focus-live-box is-empty"${accent}${
+        hidden ? ' title="서점 필터에서 이 서점을 빼 둔 상태입니다"' : ""
+      }>
+        ${label}
+        <strong>${hidden ? "필터 제외" : "순위권 밖"}</strong>
       </div>
     `;
   }
 
   const source = [appearance.storeName, appearance.listName].filter(Boolean).join(" · ");
   const body = `
-    <span>${escapeHtml(label)}</span>
-    <strong>${escapeHtml(appearance.rank)}위</strong>
-    <em class="focus-rank-source">${escapeHtml(source)}</em>
+    ${label}
+    <strong>${escapeHtml(appearance.rank)}<span>위</span></strong>
+    ${renderRankDelta(appearance)}
   `;
   const href = rankHref(appearance);
 
-  const accent = storeAccentStyle(appearance.storeId);
+  return href
+    ? `<a class="focus-live-box"${accent} href="${escapeHtml(href)}" target="_blank" rel="noreferrer" title="${escapeHtml(`${source} ${appearance.rank}위 위치로 이동${deltaHint(appearance)}`)}">${body}</a>`
+    : `<div class="focus-live-box"${accent}>${body}</div>`;
+}
+
+// 바 셀에는 화살표만 남긴다. 열두 칸에 숫자까지 붙이면 카드가 화살표 밭이
+// 되므로, 몇 계단인지는 툴팁에 적는다.
+function renderCellDelta(appearance) {
+  if (appearance.isNew) {
+    return `<span class="focus-bar-move is-new">N</span>`;
+  }
+
+  if (typeof appearance.rankDelta !== "number" || appearance.rankDelta === 0) {
+    return "";
+  }
+
+  return appearance.rankDelta > 0
+    ? `<span class="focus-bar-move is-up">▲</span>`
+    : `<span class="focus-bar-move is-down">▼</span>`;
+}
+
+function renderFocusBarCell(store, appearance) {
+  const accent = storeAccentStyle(store.id);
+
+  if (!appearance) {
+    const hidden = isStoreHidden(store.id);
+
+    return `<span class="focus-bar-cell is-empty" title="${escapeHtml(
+      hidden ? `${store.label} · 서점 필터에서 빼 둔 상태` : `${store.label} · 순위 없음`
+    )}">–</span>`;
+  }
+
+  const source = [appearance.storeName, appearance.listName].filter(Boolean).join(" · ");
+  const body = `${escapeHtml(appearance.rank)}<span>위</span>${renderCellDelta(appearance)}`;
+  const href = rankHref(appearance);
+  const hint = `${source} ${appearance.rank}위 위치로 이동${deltaHint(appearance)}`;
 
   return href
-    ? `<a class="focus-rank-metric"${accent} href="${escapeHtml(href)}" target="_blank" rel="noreferrer" title="${escapeHtml(`${source} ${appearance.rank}위 위치로 이동`)}">${body}</a>`
-    : `<div class="focus-rank-metric"${accent}>${body}</div>`;
+    ? `<a class="focus-bar-cell"${accent} href="${escapeHtml(href)}" target="_blank" rel="noreferrer" title="${escapeHtml(hint)}">${body}</a>`
+    : `<span class="focus-bar-cell"${accent} title="${escapeHtml(source)}">${body}</span>`;
+}
+
+function renderFocusBar(bar) {
+  const ranked = bar.cells.map((cell) => cell.appearance).filter(Boolean);
+  const best = ranked.length
+    ? ranked.reduce((acc, item) => (getRankValue(item.rank) < getRankValue(acc.rank) ? item : acc))
+    : null;
+  // 바 길이는 그 줄의 최고 순위다. 1위면 꽉 차고 100위면 거의 비어서, 숫자를
+  // 하나씩 읽기 전에 어느 줄이 센지 눈으로 먼저 걸린다.
+  const fill = best
+    ? Math.max(4, Math.round((1 - (getRankValue(best.rank) - 1) / FOCUS_BAR_SCALE) * 100))
+    : 0;
+
+  return `
+    <div class="focus-bar${best ? "" : " is-empty"}"${
+      best ? storeAccentStyle(best.storeId) : ""
+    }>
+      ${best ? `<span class="focus-bar-fill" style="width:${fill}%" aria-hidden="true"></span>` : ""}
+      <span class="focus-bar-label">${escapeHtml(bar.row.label)}</span>
+      <span class="focus-bar-cells">
+        ${bar.cells.map((cell) => renderFocusBarCell(cell.store, cell.appearance)).join("")}
+      </span>
+    </div>
+  `;
 }
 
 // 직전 수집 대비 이동. 히스토리가 없으면(첫 수집) 아무것도 그리지 않는다.
@@ -604,22 +787,7 @@ function deltaHint(item) {
   return ` · ${formatDateTime(baseline)} 수집 ${item.previousRank}위 대비`;
 }
 
-function renderFocusAppearance(item) {
-  const label = `${item.storeName} · ${item.listName} · ${item.rank}위`;
-  const body = `${escapeHtml(label)}${renderRankDelta(item)}`;
-  // 해당 위가 있는 목록 페이지 + 그 도서 위치를 우선하고, 없으면 도서 상세로 간다.
-  const href = rankHref(item);
-
-  if (!href) {
-    return `<span class="focus-chip">${body}</span>`;
-  }
-
-  const hint = `${label} 위치로 이동${deltaHint(item)}`;
-
-  return `<a class="focus-chip"${storeAccentStyle(item.storeId)} href="${escapeHtml(href)}" target="_blank" rel="noreferrer" title="${escapeHtml(hint)}">${body}</a>`;
-}
-
-// 순위에서 빠진 자리는 칩이 사라져 배지를 붙일 곳이 없으므로 따로 그린다.
+// 순위에서 빠진 자리는 칸이 사라져 배지를 붙일 곳이 없으므로 따로 그린다.
 // 좋은 소식만 보이고 나쁜 소식이 침묵하는 걸 막는 쪽이 이 화면의 목적에 맞다.
 function renderDroppedOut(book) {
   const dropped = visibleDropouts(book);
@@ -682,7 +850,7 @@ function summarizeFocusDeltas(books) {
   const summary = { up: 0, down: 0, entered: 0, dropped: 0 };
 
   books.forEach((book) => {
-    visibleAppearances(book).forEach((item) => {
+    focusCardPlan(book).drawn.forEach((item) => {
       if (item.isNew) {
         summary.entered += 1;
       }
@@ -755,33 +923,35 @@ function renderFocusBoardV2() {
         ${focusBooks
           .map((book) => {
             const appearances = book.appearances || [];
-            // 칩으로 그리는 건 이 중 앞쪽 일부다. 노출 개수와 최고 순위는 전부를 본다.
-            const shownAppearances = visibleAppearances(book);
-            // 타일도 칩과 같은 우선순위로 세운다: 주간 → 일간 → 분야별 → 실시간.
-            // 예전에는 실시간·분야 둘만 있었는데, 우선순위가 가장 낮은 둘을
-            // 카드에서 제일 크게 보여 주고 있던 셈이다.
-            //
-            // 기간 타일은 종합·분야를 가리지 않고 그 기간의 최고를 찾는다.
-            // 종합 목록으로 좁혔더니 추적 중인 15종 가운데 13종이 분야 순위에만
-            // 들어 있어서, 주간 23위인 책이 "순위권 밖"으로 보였다.
-            const periodBest = (period) =>
-              bestAppearanceFor(appearances, (item) => appearancePeriod(item) === period);
-            const weeklyBest = periodBest("weekly");
-            const dailyBest = periodBest("daily");
-            const categoryBest = bestAppearanceFor(
-              appearances,
-              (item) => item.group === "category"
-            );
-            // 종합 실시간과 분야 실시간을 함께 본다. 종합 TOP 100에만 기대면
-            // 분야 실시간 3위인 책도 빈 칸이 된다.
-            const realtimeBest = periodBest("realtime");
+            const plan = focusCardPlan(book);
+            const barBest = (key) => {
+              const bar = plan.bars.find((entry) => entry.row.key === key);
+              const ranked = bar ? bar.cells.map((cell) => cell.appearance).filter(Boolean) : [];
+
+              return ranked.length
+                ? ranked.reduce((acc, item) =>
+                    getRankValue(item.rank) < getRankValue(acc.rank) ? item : acc
+                  )
+                : null;
+            };
 
             // 제목도 순위 페이지로 보낸다. 예전에는 교보 상품 페이지로 갔는데,
-            // 카드 안에서 칩·타일은 순위로 가고 제목만 구매 페이지로 새는 꼴이라
-            // 같은 카드를 눌러도 어디로 갈지 알 수 없었다. 우선순위가 가장 높은
-            // 노출을 쓴다 — 주간이 있으면 주간, 없으면 일간, 분야, 실시간 순이다.
+            // 카드 안에서 칩·바는 순위로 가고 제목만 구매 페이지로 새는 꼴이라
+            // 같은 카드를 눌러도 어디로 갈지 알 수 없었다. 목적지는 우리가 정한
+            // 순위 우선순위를 따른다 — 주간종합 → 일간종합 → 주간분야 →
+            // 일간분야 → 종합 실시간. 화면에서 실시간이 맨 위에 있는 것과는
+            // 다른 이야기다. 위에 있는 이유는 지금 값이라서고, 이 순서는
+            // 어느 순위가 더 무거운지다.
+            const liveBest = bestAppearanceFor(
+              appearances,
+              (item) => item.group === "overall-realtime"
+            );
             const titleTarget =
-              weeklyBest || dailyBest || categoryBest || realtimeBest || shownAppearances[0];
+              barBest("weekly-standard") ||
+              barBest("daily-standard") ||
+              barBest("weekly-category") ||
+              barBest("daily-category") ||
+              liveBest;
             const titleHref = titleTarget ? rankHref(titleTarget) : book.link || "";
             const titleHint = titleTarget
               ? `${titleTarget.storeName} · ${titleTarget.listName} · ${titleTarget.rank}위 위치로 이동`
@@ -797,7 +967,29 @@ function renderFocusBoardV2() {
 
             return `
               <article class="focus-card">
-                <div class="focus-card-top">
+                <h3 class="focus-title">
+                  ${titleHref
+                    ? `<a href="${escapeHtml(titleHref)}" target="_blank" rel="noreferrer" title="${escapeHtml(titleHint)}">${escapeHtml(book.title)}</a>`
+                    : escapeHtml(book.title)}
+                </h3>
+                <div class="focus-live-row">
+                  ${plan.liveBoxes
+                    .map((box) => renderFocusLiveBox(box.store, box.qualifier, box.appearance))
+                    .join("")}
+                </div>
+                <div class="focus-live-row">
+                  ${plan.categoryBoxes
+                    .map((box) =>
+                      box.kind === "name"
+                        ? renderFocusCategoryNameBox(box.value)
+                        : renderFocusLiveBox(box.store, box.qualifier, box.appearance)
+                    )
+                    .join("")}
+                </div>
+                <div class="focus-bar-list">
+                  ${plan.bars.map((bar) => renderFocusBar(bar)).join("")}
+                </div>
+                <div class="focus-card-foot">
                   <span class="focus-status ${appearances.length ? "active" : ""}${
                     !appearances.length && droppedOut ? " dropped" : ""
                   }">
@@ -807,26 +999,7 @@ function renderFocusBoardV2() {
                     ${escapeHtml(formatPublishedDate(book.latestPublishedAt))} · ${escapeHtml(appearances.length)}곳 노출
                   </span>
                 </div>
-                <h3 class="focus-title">
-                  ${titleHref
-                    ? `<a href="${escapeHtml(titleHref)}" target="_blank" rel="noreferrer" title="${escapeHtml(titleHint)}">${escapeHtml(book.title)}</a>`
-                    : escapeHtml(book.title)}
-                </h3>
-                <div class="focus-rank-grid">
-                  ${renderFocusRank("주간 최고", weeklyBest)}
-                  ${renderFocusRank("일간 최고", dailyBest)}
-                  ${renderFocusRank("분야 최고", categoryBest)}
-                  ${renderFocusRank("실시간 최고", realtimeBest)}
-                </div>
-                <div class="focus-appearances">
-                  ${shownAppearances
-                    .map((item) => renderFocusAppearance(item))
-                    .join("")}
-                  ${droppedOut}
-                  ${!appearances.length && !droppedOut
-                    ? '<span class="focus-chip muted">현재 수집된 순위에는 없습니다.</span>'
-                    : ""}
-                </div>
+                ${droppedOut ? `<div class="focus-appearances">${droppedOut}</div>` : ""}
               </article>
             `;
           })
