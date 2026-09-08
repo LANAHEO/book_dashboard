@@ -637,10 +637,13 @@ function isStoreHidden(storeId) {
 // 일이 일어났는지 여기서 먼저 읽힌다.
 // 분야명 칸. 교보가 분야 실시간을 따로 내주지 않아 비는 자리에, 옆 두 칸이
 // 무슨 분야 순위인지를 적는다.
+// 이름표는 "분야" 한 줄뿐이다. 옆 두 칸은 서점 이름 아래 "분야 실시간"이
+// 붙어 두 줄이 되므로, 둘째 줄 자리는 styles.css에서 비워 둔 채 남겨 둔다 —
+// 그러지 않으면 이 칸의 분야명만 한 줄 위로 올라서 세 칸이 어긋난다.
 function renderFocusCategoryNameBox(name) {
   return `
     <div class="focus-live-box is-name${name ? "" : " is-empty"}">
-      <span class="focus-live-label"><span class="focus-live-store">분야</span>실시간 기준</span>
+      <span class="focus-live-label"><span class="focus-live-store">분야</span></span>
       <strong>${escapeHtml(name || "분야 없음")}</strong>
     </div>
   `;
@@ -703,9 +706,16 @@ function renderFocusBarCell(store, appearance) {
   if (!appearance) {
     const hidden = isStoreHidden(store.id);
 
-    return `<span class="focus-bar-cell is-empty" title="${escapeHtml(
-      hidden ? `${store.label} · 서점 필터에서 빼 둔 상태` : `${store.label} · 순위 없음`
-    )}">–</span>`;
+    // 네 줄 모두 서점이 100위까지 내주는 목록이라(RANK_LIMIT=100), 이 칸이
+    // 비었다는 건 "100위 밖"이라는 뜻이다. 줄표만 찍어 두면 아직 안 들어온
+    // 값인지 순위가 없는 건지 알 수 없었다. 필터로 감춘 칸은 다른 사실이니
+    // 그대로 줄표로 남긴다 — 교보만 골라 본 사람에게 예스24가 100위 밖이라고
+    // 거짓말하면 안 된다.
+    return `<span class="focus-bar-cell is-empty${
+      hidden ? "" : " is-out"
+    }" title="${escapeHtml(
+      hidden ? `${store.label} · 서점 필터에서 빼 둔 상태` : `${store.label} · 100위 안에 없음`
+    )}">${hidden ? "–" : "100위 밖"}</span>`;
   }
 
   const source = [appearance.storeName, appearance.listName].filter(Boolean).join(" · ");
