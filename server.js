@@ -1757,7 +1757,13 @@ function mapKyoboItem(item) {
   const publisher = String(item.pbcmName || "").trim();
 
   return {
-    rank: toNumber(item.prstRnkn || item.rowNum),
+    // rowNum 이 교보 화면에 찍히는 순위다. prstRnkn 은 목록에서 빠진 상품까지
+    // 세는 내부 순위라 화면과 어긋난다 — 실시간 목록은 prstRnkn 34·93위가
+    // 비어 있어서, 화면 30위 브레인악셀이 우리 쪽에서 31위로 나왔다. 온라인
+    // 주간(빈자리 4위)과 분야 주간(26·90위)도 같다. 화면에서 4위인 책을
+    // 5위로 적으면 이 대시보드를 서점과 나란히 놓고 보는 사람에게는 그냥
+    // 틀린 숫자다. 딥링크의 쪽 계산도 쪽이 위치로 나뉘므로 rowNum 이 맞다.
+    rank: toNumber(item.rowNum || item.prstRnkn),
     title: String(item.cmdtName || "").trim(),
     meta: makeMeta([item.chrcName, publisher, publishedAt]),
     secondary: makeMeta([price, discount, previousRank]),
