@@ -1767,8 +1767,8 @@ a {
   box-shadow: none;
 }
 
-/* 상태·출간일 줄은 카드 맨 아래로 내렸다. 도서명이 카드에서 가장 먼저,
-   가장 크게 읽혀야 하는데 그 위에 작은 글씨 두 줄이 앉아 있었다. */
+/* 카드 맨 아래는 상태 한 칸만 남았다. 출간일은 제목 옆으로 올라갔고, 노출
+   곳수는 뺐다 — 위의 네모·바가 어디에 몇 위로 올라 있는지 이미 다 보여 준다. */
 .focus-card-foot {
   display: flex;
   gap: 10px;
@@ -1796,21 +1796,39 @@ a {
   color: var(--ink);
 }
 
-.focus-appearance-count {
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 800;
+/* 제목과 출간일이 한 덩어리다. min-height는 제목 두 줄과 출간일 한 줄 자리를
+   미리 잡아 두는 값이다 — 없으면 제목 길이에 따라 아래 네모 줄이 카드마다
+   다른 높이에서 시작해 그리드가 계단처럼 어긋난다. 예전에는 이 값이
+   .focus-title에 있었는데(56px), 출간일이 덩어리에 들어오면서 여기로
+   올라왔다. 77px은 어림값이 아니라 실측이다 — 제목 두 줄(21px × 1.3 × 2)에
+   출간일 줄 17.5px과 사이 간격 4px을 더하면 76.1px이고, 이보다 낮으면 제목이
+   두 줄인 카드만 아래 네모줄이 몇 px 내려앉는다. */
+.focus-head {
+  display: flex;
+  min-height: 77px;
+  flex-direction: column;
+  justify-content: space-between;
 }
 
-/* 카드의 첫 줄이자 가장 큰 글씨. min-height는 두 줄 자리를 미리 잡아 두는
-   값이다 — 없으면 제목 길이에 따라 아래 네모 줄이 카드마다 다른 높이에서
-   시작해 그리드가 계단처럼 어긋난다. */
+/* 카드의 첫 줄이자 가장 큰 글씨. */
 .focus-title {
-  min-height: 56px;
   margin: 0;
   font-size: 21px;
   line-height: 1.3;
   letter-spacing: -0.03em;
+}
+
+/* 출간일은 제목 덩어리의 오른쪽 아래에 붙는다. 덩어리의 space-between이
+   제목이 한 줄인 카드에서도 출간일을 바닥으로 내려, 카드마다 같은 높이에
+   선다. margin-top은 제목이 두 줄까지 차서 덩어리가 늘어난 카드에서 제목과
+   붙지 않게 두는 최소 간격이다. 신간을 훑는 화면이라 제목과 함께 읽혀야
+   하는 값이어서 카드 맨 아래 상태 줄에서 올려 왔다. */
+.focus-published {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-align: right;
 }
 
 .focus-title a {
@@ -2381,7 +2399,9 @@ a.focus-chip:hover {
     margin-top: 10px;
   }
 
-  .focus-title {
+  /* 카드가 한 줄로 서는 폭에서는 나란히 맞출 이웃이 없다. 제목이 짧은 카드에
+     빈 자리를 남기는 대신 덩어리를 내용만큼만 쓴다. */
+  .focus-head {
     min-height: 0;
   }
 }

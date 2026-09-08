@@ -977,11 +977,14 @@ function renderFocusBoardV2() {
 
             return `
               <article class="focus-card">
-                <h3 class="focus-title">
-                  ${titleHref
-                    ? `<a href="${escapeHtml(titleHref)}" target="_blank" rel="noreferrer" title="${escapeHtml(titleHint)}">${escapeHtml(book.title)}</a>`
-                    : escapeHtml(book.title)}
-                </h3>
+                <div class="focus-head">
+                  <h3 class="focus-title">
+                    ${titleHref
+                      ? `<a href="${escapeHtml(titleHref)}" target="_blank" rel="noreferrer" title="${escapeHtml(titleHint)}">${escapeHtml(book.title)}</a>`
+                      : escapeHtml(book.title)}
+                  </h3>
+                  <p class="focus-published">${escapeHtml(formatPublishedDate(book.latestPublishedAt))}</p>
+                </div>
                 <div class="focus-live-row">
                   ${plan.liveBoxes
                     .map((box) => renderFocusLiveBox(box.store, box.qualifier, box.appearance))
@@ -1004,9 +1007,6 @@ function renderFocusBoardV2() {
                     !appearances.length && droppedOut ? " dropped" : ""
                   }">
                     ${statusLabel}
-                  </span>
-                  <span class="focus-appearance-count">
-                    ${escapeHtml(formatPublishedDate(book.latestPublishedAt))} · ${escapeHtml(appearances.length)}곳 노출
                   </span>
                 </div>
                 ${droppedOut ? `<div class="focus-appearances">${droppedOut}</div>` : ""}
