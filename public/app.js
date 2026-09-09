@@ -941,6 +941,59 @@ function summarizeFocusDeltas(books) {
   return summary;
 }
 
+// 이 화면이 어떻게 만들어지는지를 화면 안에서 밝힌다. 숫자가 서점과 다르게
+// 보일 때 "왜 다른지"를 물어볼 곳이 없으면 대시보드를 못 믿게 된다 — 무엇을
+// 언제 어디서 가져오는지, 순위가 없을 때 무엇이라 적는지를 여기서 답한다.
+//
+// 주기·범위 같은 숫자를 문장에 직접 적지 않고 서버가 내려준 값을 쓴다. 두 곳에
+// 적어 두면 서버 설정을 바꿀 때 문구만 옛말로 남는다 — 이 화면에서 실제로
+// 겪은 사고다("실시간 5분"이라 적어 놓고 60분마다 수집했다).
+function renderFocusHowItWorks() {
+  const dashboard = state.dashboard || {};
+  const baseline = dashboard.deltaBaselineAt;
+  const standardHours =
+    (dashboard.collectIntervals && dashboard.collectIntervals.standardHours) || 6;
+
+  const rows = [
+    [
+      "어떤 책이 오르나",
+      `${WATCH_PUBLISHER_NAME}가 펴낸 책을 출판사 목록에서 자동으로 불러옵니다. 순위에 든 책을 위에 두고, 그 안에서 출간 최신순입니다.`
+    ],
+    [
+      "순위를 어디서 찾나",
+      "교보문고·예스24·알라딘 세 곳의 종합·분야 순위(주간·일간·실시간)에서 이 책을 찾습니다. 각 순위는 100위까지 봅니다."
+    ],
+    [
+      "얼마나 자주 가져오나",
+      `10분마다 세 서점의 실시간 순위가 바뀌었는지 확인하고, 바뀌었으면 전체를 다시 가져옵니다. 주간·일간처럼 하루 단위로 바뀌는 순위는 ${escapeHtml(
+        standardHours
+      )}시간마다입니다. 수집 서버 사정으로 가끔 더 걸릴 수 있습니다.`
+    ],
+    [
+      "화면 읽는 법",
+      [
+        "<b>100위 밖</b>은 그 순위 100위 안에 이 책이 없다는 뜻입니다.",
+        "한 책이 여러 분야에 동시에 오르므로, 카드마다 분야를 하나 정해 분야 순위 두 줄은 그 분야만 보여줍니다.",
+        baseline
+          ? `<b>▲▼</b>와 <b>NEW</b>는 ${escapeHtml(
+              formatDateTime(baseline)
+            )} 수집과 견준 변화입니다.`
+          : ""
+      ]
+        .filter(Boolean)
+        .join(" ")
+    ]
+  ];
+
+  return `
+    <dl class="focus-how">
+      ${rows
+        .map(([term, detail]) => `<dt>${escapeHtml(term)}</dt><dd>${detail}</dd>`)
+        .join("")}
+    </dl>
+  `;
+}
+
 function renderFocusDeltaSummary(books) {
   // 비교할 직전 수집이 없으면(첫 수집) 0을 늘어놓지 않고 줄 자체를 뺀다.
   if (!(state.dashboard && state.dashboard.deltaBaselineAt)) {
@@ -971,12 +1024,7 @@ function renderFocusBoardV2() {
         <div>
           <div class="section-label">Sangsang Square</div>
           <h2>상상스퀘어 도서 순위</h2>
-          <p>상상스퀘어 신간을 자동으로 불러와 수집된 순위에서 노출을 찾고, 출간 최신순으로 표시합니다.</p>
-          ${state.dashboard && state.dashboard.deltaBaselineAt
-            ? `<p class="focus-delta-note">▲▼ 는 ${escapeHtml(
-                formatDateTime(state.dashboard.deltaBaselineAt)
-              )} 수집과 비교한 순위 변화입니다. NEW 는 그때 없던 노출입니다.</p>`
-            : ""}
+          ${renderFocusHowItWorks()}
           ${renderFocusDeltaSummary(focusBooks)}
         </div>
         <span class="section-count">${

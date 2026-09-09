@@ -2772,10 +2772,15 @@ async function buildDashboard(forceIds = []) {
     }
   };
 
+  // 저장이 실패해도 화면은 방금 만든 payload 로 그릴 수 있으므로 여기서 죽지
+  // 않는다. 다만 조용히 넘어가면 안 된다 — 저장이 안 되면 다음 요청부터는
+  // 예전 스냅샷이 나가므로 수집한 값이 통째로 버려진 것과 같다. 실제로 그렇게
+  // 됐고, /api/collect 는 그동안 ok:true 를 돌려주고 있었다.
   try {
     await writeDashboardSnapshot(payload);
     await writeBootstrapSnapshot(payload);
   } catch (error) {
+    payload.storageError = String((error && error.message) || error);
     console.error("[supabase] failed to persist dashboard snapshot:", error);
   }
 
@@ -3673,11 +3678,16 @@ async function handleRequest(request, response) {
       }
 
       const payload = await rebuildDashboardSnapshot(`collect:${scope}`);
+      // 저장에 실패했으면 수집은 실패한 것이다. 만들어 놓고 못 남겼으면 다음
+      // 요청부터는 예전 값이 나가므로, 부른 쪽(크론)에 성공이라고 말하면 안 된다.
+      const storageError = payload ? payload.storageError || "" : "";
+      const ok = Boolean(payload) && !storageError;
 
-      jsonResponse(response, payload ? 200 : 500, {
-        ok: Boolean(payload),
+      jsonResponse(response, ok ? 200 : 500, {
+        ok,
         scope,
         skipped: false,
+        storageError: storageError || undefined,
         probe: probe ? probe.results : undefined,
         generatedAt: payload ? payload.generatedAt : null,
         elapsedMs: Date.now() - startedAt
