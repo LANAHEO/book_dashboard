@@ -272,11 +272,37 @@ function titleFragment(title) {
   return `#:~:text=${encodeURIComponent(snippet)}`;
 }
 
+// 좁은 화면에서는 목록이 아니라 그 책 상품 페이지로 보낸다. 서점의 모바일
+// 사이트가 우리 딥링크의 전제를 지키지 않기 때문이다. 세 서점을 모바일
+// UA로 열어 확인한 것:
+//
+// - 알라딘은 /m/mbest.aspx 로 갈아탄다. 파라미터는 따라가지만 목록 markup이
+//   데스크톱과 달라 제목 조각이 걸릴 자리가 없고, 실제로 백지가 떴다.
+// - 교보는 그 책을 맨 위로 올리려고 붙인 page·per 창을 모바일에서 무시한다.
+//   그래서 43위를 눌러도 1위부터 보이고, 앱 설치 배너가 화면을 덮는다.
+// - 카카오톡·네이버 인앱 브라우저는 #:~:text= 자체를 지원하지 않는다.
+//
+// 상품 페이지는 서점마다 제대로 된 모바일 화면이 있고, 무엇보다 언제나 그
+// 책이 나온다. 순위 위치를 잃는 대신 "누른 책이 열린다"를 지킨다.
+function goesToProductPage(item) {
+  return isNarrowScreen() && Boolean(item.link);
+}
+
+// 링크가 실제로 가는 곳을 문장으로 적는다. rankHref 와 같은 조건을 봐야 한다 —
+// 어긋나면 "43위 위치로 이동"이라 안내하고 상품 페이지를 여는 꼴이 된다.
+function rankLinkAction(item) {
+  return goesToProductPage(item) ? "상품 페이지 열기" : `${item.rank}위 위치로 이동`;
+}
+
 // 순위 목록으로 가는 링크. 그 책 제목까지 스크롤되도록 조각을 붙인다.
 //
 // 제목 조각이 언제나 우선이다. 서버가 붙여 둔 상품 id 앵커(#ordChk_, #addInputShop_)는
 // 카드 하단을 가리켜서 정작 제목이 화면 밖으로 밀린다 — 제목을 모를 때만 쓴다.
 function rankHref(item) {
+  if (goesToProductPage(item)) {
+    return item.link;
+  }
+
   if (!item.listUrl) {
     return item.link || "";
   }
@@ -313,10 +339,10 @@ function renderItem(item) {
     : '<div class="cover"></div>';
 
   // 순위를 보러 온 화면이므로 그 책이 실제로 놓인 목록 위치로 보낸다.
-  // 목록 위치를 못 만들었을 때만 상품 상세로 떨어진다.
+  // 목록 위치를 못 만들었을 때와 좁은 화면에서는 상품 상세로 떨어진다.
   const href = rankHref(item);
   const hint = item.listUrl
-    ? `${item.title} · ${item.rank}위 위치로 이동`
+    ? `${item.title} · ${rankLinkAction(item)}`
     : `${item.title} 상세 페이지 열기`;
   const titleStart = href
     ? `<a class="book-title" href="${escapeHtml(href)}" target="_blank" rel="noreferrer" title="${escapeHtml(hint)}">`
@@ -680,7 +706,7 @@ function renderFocusLiveBox(store, qualifier, appearance) {
   const href = rankHref(appearance);
 
   return href
-    ? `<a class="focus-live-box"${accent} href="${escapeHtml(href)}" target="_blank" rel="noreferrer" title="${escapeHtml(`${source} ${appearance.rank}위 위치로 이동${deltaHint(appearance)}`)}">${body}</a>`
+    ? `<a class="focus-live-box"${accent} href="${escapeHtml(href)}" target="_blank" rel="noreferrer" title="${escapeHtml(`${source} ${rankLinkAction(appearance)}${deltaHint(appearance)}`)}">${body}</a>`
     : `<div class="focus-live-box"${accent}>${body}</div>`;
 }
 
@@ -721,7 +747,7 @@ function renderFocusBarCell(store, appearance) {
   const source = [appearance.storeName, appearance.listName].filter(Boolean).join(" · ");
   const body = `${escapeHtml(appearance.rank)}<span>위</span>${renderCellDelta(appearance)}`;
   const href = rankHref(appearance);
-  const hint = `${source} ${appearance.rank}위 위치로 이동${deltaHint(appearance)}`;
+  const hint = `${source} ${rankLinkAction(appearance)}${deltaHint(appearance)}`;
 
   return href
     ? `<a class="focus-bar-cell"${accent} href="${escapeHtml(href)}" target="_blank" rel="noreferrer" title="${escapeHtml(hint)}">${body}</a>`
@@ -964,7 +990,7 @@ function renderFocusBoardV2() {
               liveBest;
             const titleHref = titleTarget ? rankHref(titleTarget) : book.link || "";
             const titleHint = titleTarget
-              ? `${titleTarget.storeName} · ${titleTarget.listName} · ${titleTarget.rank}위 위치로 이동`
+              ? `${titleTarget.storeName} · ${titleTarget.listName} · ${rankLinkAction(titleTarget)}`
               : `${book.title} 상세 페이지 열기`;
 
             const droppedOut = renderDroppedOut(book);
@@ -1901,8 +1927,31 @@ function removeAddressHash() {
   );
 }
 
+// 820px 경계를 넘나들면 링크 목적지가 목록↔상품으로 갈린다. 다시 그리지 않으면
+// 폰을 가로로 눕혔을 때 이전 폭에서 만든 링크가 그대로 남는다.
+function watchNarrowScreen() {
+  if (typeof window.matchMedia !== "function") {
+    return;
+  }
+
+  const query = window.matchMedia("(max-width: 820px)");
+  const redraw = () => {
+    if (state.dashboard) {
+      renderDashboard();
+    }
+  };
+
+  if (typeof query.addEventListener === "function") {
+    query.addEventListener("change", redraw);
+  } else if (typeof query.addListener === "function") {
+    // 사파리 13 이하
+    query.addListener(redraw);
+  }
+}
+
 removeAddressHash();
 window.addEventListener("hashchange", removeAddressHash);
+watchNarrowScreen();
 bindEvents();
 showIdleBadge();
 // 서버가 첫 화면 데이터를 HTML에 실어 보낸다(window.__BOOTSTRAP__).
