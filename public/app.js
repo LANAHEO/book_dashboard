@@ -951,8 +951,9 @@ function summarizeFocusDeltas(books) {
 function renderFocusHowItWorks() {
   const dashboard = state.dashboard || {};
   const baseline = dashboard.deltaBaselineAt;
-  const standardHours =
-    (dashboard.collectIntervals && dashboard.collectIntervals.standardHours) || 6;
+  const intervals = dashboard.collectIntervals || {};
+  const realtimeMinutes = intervals.realtimeMinutes || 10;
+  const standardHours = intervals.standardHours || 6;
 
   const rows = [
     [
@@ -965,7 +966,9 @@ function renderFocusHowItWorks() {
     ],
     [
       "얼마나 자주 가져오나",
-      `10분마다 세 서점의 실시간 순위가 바뀌었는지 확인하고, 바뀌었으면 전체를 다시 가져옵니다. 주간·일간처럼 하루 단위로 바뀌는 순위는 ${escapeHtml(
+      `${escapeHtml(
+        realtimeMinutes
+      )}분마다 세 서점의 실시간 순위가 바뀌었는지 확인하고, 바뀌었으면 전체를 다시 가져옵니다. 주간·일간처럼 하루 단위로 바뀌는 순위는 ${escapeHtml(
         standardHours
       )}시간마다입니다. 수집 서버 사정으로 가끔 더 걸릴 수 있습니다.`
     ],

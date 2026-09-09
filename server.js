@@ -62,7 +62,15 @@ const SOURCE_CACHE_DIR = path.join(__dirname, ".cache", "rankings");
 const FILE_CACHE_ENABLED = !process.env.VERCEL;
 const DASHBOARD_SNAPSHOT_ID = "latest";
 
-// 서점 실시간은 약 1시간, 일·주간은 더 느리게 바뀌므로 수집 주기를 맞춤.
+// 화면에 "얼마나 자주 가져오는지"로 적히는 값. 아래 REALTIME_REFRESH_MS 는
+// 캐시가 언제 낡는지를 정하는 값일 뿐이고, 실제로 수집을 부르는 주기는 밖에
+// 있다(.github/workflows/collect.yml 의 INTERVAL). 예전에는 배지가 캐시 수명을
+// 수집 주기인 양 "실시간 60분"이라고 적었다 — 10분마다 부르고 있는데도.
+// 두 파일에 나뉘어 있으니 collect.yml 을 고치면 여기도 같이 고쳐야 한다.
+const COLLECT_INTERVAL_MINUTES = 10;
+
+// 서점 실시간은 약 1시간, 일·주간은 더 느리게 바뀌므로 캐시 수명을 맞춤.
+// 수집 트리거는 이 값과 무관하게 loadSource(force) 로 강제 갱신한다.
 const REALTIME_REFRESH_MS = 60 * 60 * 1000;
 const STANDARD_REFRESH_MS = 6 * 60 * 60 * 1000;
 const REQUEST_TIMEOUT_MS = 15_000;
@@ -2772,7 +2780,7 @@ async function buildDashboard(forceIds = []) {
     // 화면이 수집 주기를 직접 적어 두면 서버 값을 바꿀 때 같이 안 고쳐져 거짓말이 된다.
     // 실제로 그런 일이 있었다 — 배지가 "실시간 5분 / 일반 10분"으로 남아 있었다.
     collectIntervals: {
-      realtimeMinutes: REALTIME_REFRESH_MS / 60000,
+      realtimeMinutes: COLLECT_INTERVAL_MINUTES,
       standardHours: STANDARD_REFRESH_MS / 3600000
     }
   };
