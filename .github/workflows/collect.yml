@@ -101,6 +101,7 @@ jobs:
 
           scope="$FIRST_SCOPE"
           fail_streak=0
+          stale_warn=0
 
           while :; do
             hour=$(date -u +%H)
@@ -135,12 +136,32 @@ jobs:
             if [ "$LAST_CHECK_HOUR" != "$hour" ]; then
               LAST_CHECK_HOUR="$hour"
               echo "--- 순위 대조 검사"
-              if node scripts/check-ranks.js --base "$BASE_URL" --books 4; then
-                echo "--- 검사 통과"
-              else
-                echo "고정 목록이 서점과 어긋난다. 순환을 멈춘다." >&2
-                exit 1
-              fi
+              node scripts/check-ranks.js --base "$BASE_URL" --books 4
+              check=$?
+              case "$check" in
+                0)
+                  echo "--- 검사 통과"
+                  stale_warn=0
+                  ;;
+                3)
+                  # 묵음은 "수집이 멈췄다"는 증상이다. 여기서 순환을 끊으면
+                  # 멈춘 수집이 스스로 되살아날 수 없다 — 점화마다 한 번 긁고
+                  # 검사에서 죽는 교착에 실제로 갇혔다. 그러니 계속 돌리고,
+                  # 순환이 끝날 때 빨간 표시만 남긴다. 계속 돌면 대개 몇 분
+                  # 안에 스스로 풀린다.
+                  echo "--- 데이터가 묵었다. 경고만 남기고 계속 수집한다."
+                  stale_warn=1
+                  ;;
+                2)
+                  # 검사기가 서점 페이지를 못 열었다. 서점이 잠깐 흔들린 것과
+                  # 우리 버그를 여기서 구분할 수 없으니, 수집을 볼모로 잡지 않는다.
+                  echo "--- 검사 자체가 실패했다(2). 수집은 계속한다."
+                  ;;
+                *)
+                  echo "고정 목록이 서점과 어긋난다. 순환을 멈춘다." >&2
+                  exit 1
+                  ;;
+              esac
             fi
 
             scope="realtime"
@@ -160,3 +181,10 @@ jobs:
           done
 
           echo "순환 종료 $(date -u +%H:%M:%SZ) — 다음 예약이 다시 켠다"
+
+          # 마지막 검사에서도 데이터가 묵어 있었으면 실행을 빨갛게 남긴다.
+          # 순환을 죽이지는 않되, 눈에는 띄어야 한다.
+          if [ "$stale_warn" = "1" ]; then
+            echo "순환 내내 데이터가 묵어 있었다. 수집 경로를 봐야 한다." >&2
+            exit 1
+          fi

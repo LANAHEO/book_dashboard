@@ -16,7 +16,15 @@
 //   node scripts/check-ranks.js                        # 배포된 대시보드를 본다
 //   node scripts/check-ranks.js --base http://localhost:3000
 //   node scripts/check-ranks.js --books 8              # 확인할 도서 수
-// 고정 목록에서 불일치가 하나라도 있으면 종료 코드 1.
+// 종료 코드:
+//   0  고정 목록이 서점과 일치하고, 데이터도 제 주기 안이다
+//   1  고정 목록이 서점과 어긋난다 — 버그다. 수집을 멈춰야 한다
+//   2  검사 자체가 실패했다 (네트워크·파싱)
+//   3  값은 맞지만 데이터가 묵었다 — 경고다. 수집을 멈추면 안 된다
+//
+// 3을 1과 나눠 둔 이유: 묵음은 "수집이 멈췄다"는 *증상*이다. 그걸로 수집
+// 루프를 죽이면, 한 번 멈춘 수집이 스스로 되살아날 수 없는 교착이 된다.
+// 실제로 그렇게 갇혔다 — 점화될 때마다 한 번 긁고 검사에서 죽었다.
 
 const DEFAULT_BASE = "https://book-dashboard-gilt.vercel.app";
 const UA =
@@ -182,13 +190,16 @@ async function storeRanks(list) {
   //
   // 이 검사가 잡아야 하는 것은 "몇 분 늦었나"가 아니라 "수집이 멈췄나"다.
   // 멈추면 시간 단위로 벌어지므로 한 시간을 경계로 둔다.
+  // 임계값을 전 그룹 일괄로 두면 안 된다. 주간·일간·월간은 설계상 6시간마다
+  // 모으므로(collectIntervals.standardHours), 60분을 들이대면 건강한 수집도
+  // 6시간 중 5시간은 "묵음"으로 찍힌다. 그래서 각 그룹이 스스로 밝힌 다음
+  // 갱신 예정 시각(nextRefreshAt)을 기준으로 삼는다 — 그게 이 시스템이
+  // 약속한 주기다. 그 시각을 지나고도 유예를 넘겨 안 들어오면 멈춘 것이다.
   const cycle = (payload.collectIntervals && payload.collectIntervals.realtimeMinutes) || 5;
-  const staleLimit = Math.max(cycle * 12, 60);
+  const grace = Math.max(cycle * 4, 30);
   const lagProblems = [];
 
-  console.log(
-    `우리 데이터가 얼마나 묵었나 (수집 주기 ${cycle}분 · ${staleLimit}분 넘으면 수집이 멈춘 것으로 본다)`
-  );
+  console.log(`우리 데이터가 얼마나 묵었나 (갱신 예정 시각 + 유예 ${grace}분을 넘기면 멈춘 것으로 본다)`);
   for (const store of payload.storeStatus || []) {
     for (const group of store.groups || []) {
       const ours = Date.parse(group.collectedAt || "");
@@ -198,11 +209,16 @@ async function storeRanks(list) {
       const where = `${store.storeId} ${group.label}`;
       const basis = group.sourceStamp ? `  (서점 기준 ${group.sourceStamp})` : "";
 
-      if (age <= staleLimit) {
+      // nextRefreshAt이 없으면 실시간 주기로 되돌아간다.
+      const due = Date.parse(group.nextRefreshAt || "");
+      const deadline = (Number.isFinite(due) ? due : ours + cycle * 60000) + grace * 60000;
+      const over = Math.round((Date.now() - deadline) / 60000);
+
+      if (over <= 0) {
         console.log(`  OK     ${where.padEnd(18)} ${age}분 전${basis}`);
       } else {
-        console.log(`  묵음   ${where.padEnd(18)} ${age}분 전 — ${staleLimit}분 초과${basis}`);
-        lagProblems.push(`${where} ${age}분 전`);
+        console.log(`  묵음   ${where.padEnd(18)} ${age}분 전 — 예정보다 ${over}분 늦음${basis}`);
+        lagProblems.push(`${where} ${age}분 전 (예정보다 ${over}분 늦음)`);
       }
     }
   }
@@ -225,12 +241,12 @@ async function storeRanks(list) {
   }
 
   if (lagProblems.length) {
-    console.log("\n데이터가 묵었다 — 수집이 돌고 있는지 봐야 한다:");
+    console.log("\n데이터가 묵었다 — 값은 맞지만 수집이 늦다 (경고, 수집은 계속한다):");
     lagProblems.forEach((n) => console.log(`  ${n}`));
-    process.exit(1);
+    process.exit(3);
   }
 
-  console.log("\n고정 목록은 서점과 일치하고, 데이터도 한 주기 안이다.");
+  console.log("\n고정 목록은 서점과 일치하고, 데이터도 제 주기 안이다.");
 })().catch((error) => {
   console.error("검사 자체가 실패했습니다:", error);
   process.exit(2);
