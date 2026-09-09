@@ -180,7 +180,22 @@ function focusPinRank(title) {
 
   return index === -1 ? FOCUS_PINNED_KEYS.length : index;
 }
-const FOCUS_CATALOG_LIMIT = 20;
+// 첫 화면에 세울 도서의 출간일 하한. 이 날짜 이후에 나온 책은 순위에 들었든
+// 안 들었든 전부 카드로 세운다.
+//
+// 예전에는 "최신 몇 종"(20종)으로 잘랐다. 그러면 출판사가 책을 내는 속도에
+// 따라 화면이 덮는 기간이 멋대로 바뀐다 — 실제로 2026년 신간이 33종 쌓이자
+// 2025년 책이 통째로 밀려났다. 기간으로 자르면 그 경계가 흔들리지 않는다.
+const FOCUS_CATALOG_SINCE = "2025-01";
+
+// 알라딘 출판사 검색은 한 쪽에 50종까지 준다. 상상스퀘어는 지금 135종이고
+// 2025-01 이후만 75종이라 두 쪽으로는 모자란다.
+const FOCUS_CATALOG_PAGE_SIZE = 50;
+const FOCUS_CATALOG_PAGES = 3;
+
+// 안전장치. 하한을 옛 연도로 내리거나 출판사가 갑자기 수백 종을 올려도,
+// 한 권당 보강 요청이 2건(알라딘 상세 + 교보 검색)이라 그만큼 곱해진다.
+const FOCUS_CATALOG_LIMIT = 120;
 const FOCUS_CATALOG_TTL_MS = 6 * 60 * 60 * 1000;
 const FOCUS_CATALOG_RETRY_MS = 10 * 60 * 1000;
 
@@ -2312,13 +2327,18 @@ async function enrichCatalogBook(book) {
   };
 }
 
-function makePublisherCatalogUrl() {
+function makePublisherCatalogUrl(page = 1) {
   const url = new URL("https://www.aladin.co.kr/search/wsearchresult.aspx");
   url.searchParams.set("SearchTarget", "Book");
   url.searchParams.set("KeyPublisher", WATCH_PUBLISHER_NAME);
   url.searchParams.set("SortOrder", "5");
-  url.searchParams.set("ViewRowCount", "50");
+  url.searchParams.set("ViewRowCount", String(FOCUS_CATALOG_PAGE_SIZE));
   url.searchParams.set("ViewType", "Detail");
+
+  if (page > 1) {
+    url.searchParams.set("page", String(page));
+  }
+
   return url.toString();
 }
 
@@ -2344,12 +2364,25 @@ function mapPublisherCatalogBlock(block) {
 }
 
 async function fetchPublisherCatalog() {
-  const html = await fetchText(makePublisherCatalogUrl(), {
-    accept: "text/html,application/xhtml+xml"
-  });
-  const blocks = html.split(/<div class="ss_book_box"[^>]*>/).slice(1);
+  // 알라딘 검색은 SortOrder=5 로도 쪽 안에서 출간일이 딱 정렬돼 오지 않는다
+  // (같은 쪽에 2025년 9월과 12월이 섞여 있었다). 그래서 "오래된 쪽이 나오면
+  // 멈추기"가 아니라 정해진 쪽수를 다 받고, 날짜 하한은 그 뒤에 적용한다.
+  const pages = await Promise.all(
+    Array.from({ length: FOCUS_CATALOG_PAGES }, (_, index) =>
+      fetchText(makePublisherCatalogUrl(index + 1), {
+        accept: "text/html,application/xhtml+xml"
+      }).catch((error) => {
+        // 뒤쪽 한 쪽이 실패해도 앞쪽으로 화면을 세운다. 여기서 던지면
+        // 첫 화면이 통째로 빈다.
+        console.error(`[catalog] ${index + 1}쪽 실패:`, error.message);
+        return "";
+      })
+    )
+  );
+
   const seen = new Set();
-  const books = blocks
+  const books = pages
+    .flatMap((html) => html.split(/<div class="ss_book_box"[^>]*>/).slice(1))
     .map(mapPublisherCatalogBlock)
     .filter(Boolean)
     .filter((book) => {
@@ -2367,9 +2400,18 @@ async function fetchPublisherCatalog() {
     throw new Error(`${WATCH_PUBLISHER_NAME} 도서 목록을 찾지 못했습니다.`);
   }
 
+  // 출간일을 모르는 책은 남긴다. 검색 페이지가 날짜를 못 준 것일 뿐이고,
+  // 보강에서 채워지는 경우가 있다 — 모른다는 이유로 빼면 조용히 사라진다.
   const shortlist = books
+    .filter(
+      (book) => !book.publishedAt || String(book.publishedAt) >= FOCUS_CATALOG_SINCE
+    )
     .sort((a, b) => String(b.publishedAt).localeCompare(String(a.publishedAt)))
     .slice(0, FOCUS_CATALOG_LIMIT);
+
+  console.log(
+    `[catalog] ${books.length}종 중 ${FOCUS_CATALOG_SINCE} 이후 ${shortlist.length}종`
+  );
 
   // 보강은 6시간 TTL 뒤에서만 돌고, fetchText가 호스트당 4개로 조절하므로
   // 한 번에 몰아 보내도 서점에 부담이 되지 않는다.
