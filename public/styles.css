@@ -1974,7 +1974,6 @@ a {
 }
 
 .focus-bar {
-  position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
@@ -1987,20 +1986,7 @@ a {
   background: var(--surface-muted);
 }
 
-/* 바 길이는 그 줄의 최고 순위다. 숫자를 하나씩 읽기 전에 어느 줄이 센지
-   눈으로 먼저 걸리게 하려고 깐다. 글씨 아래에 있어야 하므로 z-index 없이
-   먼저 그리고, 나머지 칸은 position으로 위에 올린다. */
-.focus-bar-fill {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 0;
-  border-radius: 9px 0 0 9px;
-  background: color-mix(in srgb, var(--store-accent, var(--ink)) 16%, transparent);
-}
-
 .focus-bar-label {
-  position: relative;
   overflow: hidden;
   color: var(--muted-strong);
   font-size: 11px;
@@ -2011,7 +1997,6 @@ a {
 }
 
 .focus-bar-cells {
-  position: relative;
   display: grid;
   grid-template-columns: repeat(3, 46px);
   gap: 3px;
@@ -2877,15 +2862,17 @@ a.focus-live-box:focus-visible {
   color: var(--muted);
 }
 
+/* 순위 칸에는 색을 칠하지 않는다. 카드 하나에 네 줄 × 세 칸이라 서점색을
+   얹으면 카드가 색 밭이 되고 숫자가 뒤로 밀린다. 어느 칸이 어느 서점인지는
+   위 네모 줄의 이름표(교보·예스·알라딘)가 열 머리 노릇을 한다.
+   누를 수 있다는 신호는 색 대신 테두리로만 준다. */
 .focus-bar-cell:not(.is-empty) {
-  border: 1px solid color-mix(in srgb, var(--store-accent, var(--ink)) 26%, transparent);
-  background: color-mix(in srgb, var(--store-accent, var(--ink)) 10%, #fff);
+  border: 1px solid transparent;
 }
 
 a.focus-bar-cell:hover,
 a.focus-bar-cell:focus-visible {
-  border-color: color-mix(in srgb, var(--store-accent, var(--ink)) 55%, var(--line));
-  background: color-mix(in srgb, var(--store-accent, var(--ink)) 18%, #fff);
+  border-color: var(--line);
   outline: none;
 }
 

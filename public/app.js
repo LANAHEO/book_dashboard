@@ -805,8 +805,6 @@ function renderCellDelta(appearance) {
 }
 
 function renderFocusBarCell(store, appearance) {
-  const accent = storeAccentStyle(store.id);
-
   if (!appearance) {
     const hidden = isStoreHidden(store.id);
 
@@ -828,26 +826,19 @@ function renderFocusBarCell(store, appearance) {
   const hint = `${source} ${appearance.rank}위 위치로 이동${deltaHint(appearance)}${rankTimingNote(appearance)}`;
 
   return href
-    ? `<a class="focus-bar-cell"${accent} href="${escapeHtml(href)}" target="_blank" rel="noreferrer" title="${escapeHtml(hint)}">${body}</a>`
-    : `<span class="focus-bar-cell"${accent} title="${escapeHtml(source)}">${body}</span>`;
+    ? `<a class="focus-bar-cell" href="${escapeHtml(href)}" target="_blank" rel="noreferrer" title="${escapeHtml(hint)}">${body}</a>`
+    : `<span class="focus-bar-cell" title="${escapeHtml(source)}">${body}</span>`;
 }
 
+// 네 줄에는 색을 칠하지 않는다. 예전에는 줄 배경에 최고 순위만큼 길이가 차는
+// 색 바를 깔고 칸마다 서점색을 얹었는데, 한 카드에 네 줄 × 세 칸이라 카드가
+// 색 밭이 되고 정작 읽어야 하는 숫자가 뒤로 밀렸다. 어느 칸이 어느 서점인지는
+// 위 네모 줄의 이름표가 열 머리 노릇을 하므로 색 없이도 읽힌다.
 function renderFocusBar(bar) {
-  const ranked = bar.cells.map((cell) => cell.appearance).filter(Boolean);
-  const best = ranked.length
-    ? ranked.reduce((acc, item) => (getRankValue(item.rank) < getRankValue(acc.rank) ? item : acc))
-    : null;
-  // 바 길이는 그 줄의 최고 순위다. 1위면 꽉 차고 100위면 거의 비어서, 숫자를
-  // 하나씩 읽기 전에 어느 줄이 센지 눈으로 먼저 걸린다.
-  const fill = best
-    ? Math.max(4, Math.round((1 - (getRankValue(best.rank) - 1) / FOCUS_BAR_SCALE) * 100))
-    : 0;
+  const hasAny = bar.cells.some((cell) => cell.appearance);
 
   return `
-    <div class="focus-bar${best ? "" : " is-empty"}"${
-      best ? storeAccentStyle(best.storeId) : ""
-    }>
-      ${best ? `<span class="focus-bar-fill" style="width:${fill}%" aria-hidden="true"></span>` : ""}
+    <div class="focus-bar${hasAny ? "" : " is-empty"}">
       <span class="focus-bar-label">${escapeHtml(bar.row.label)}</span>
       <span class="focus-bar-cells">
         ${bar.cells.map((cell) => renderFocusBarCell(cell.store, cell.appearance)).join("")}
