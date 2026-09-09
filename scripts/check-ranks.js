@@ -166,39 +166,43 @@ async function storeRanks(list) {
     }
   }
 
-  // ── 서점 기준 시각과 우리 수집 시각의 차이 ──────────────────────────
-  // 요구 기준은 5분 이내다. 다만 "우리가 늦은 것"과 "서점이 아직 새 기준을
-  // 올리지 않은 것"은 다른 문제다. 예스24는 한 시간 전 기준을 최신으로
-  // 내주는 일이 있어서(17:15에 16:00 기준), 그건 우리가 더 자주 가져와도
-  // 줄지 않는다. 한 주기(60분)를 넘는 차이는 서점 쪽으로 본다.
-  const LAG_LIMIT = 5;
-  const STORE_BEHIND = 60;
+  // ── 우리 데이터가 얼마나 묵었나 ─────────────────────────────────────
+  // 처음에는 "서점이 밝힌 기준 시각"과 "우리 수집 시각"의 차이를 5분 안에
+  // 두려고 했다. 그건 이 값으로는 지킬 수 없다 — 교보는 매시 정각 기준을
+  // 한 시간 동안 그대로 내주므로, 17:55 에 아무리 신선하게 가져와도 기준은
+  // 17:00 이고 차이는 55분으로 적힌다. 정각 직후 5분만 통과하고 나머지
+  // 55분은 실패로 찍혀서, 이 검사가 매시간 수집 루프를 죽였다.
+  //
+  // 지킬 수 있고 뜻이 있는 것은 이쪽이다: 우리가 마지막으로 가져온 시각이
+  // 지금으로부터 한 수집 주기 안에 있는가. 그래야 화면 숫자가 서점이 지금
+  // 내주는 값과 같다. 기준 시각 차이는 참고로만 적는다.
+  // 임계값을 주기의 몇 배로 잡으면 오탐이 난다. 순위가 지난번과 같으면
+  // /api/collect 가 스냅샷을 다시 쓰지 않고 끝내므로(정상 동작), 아무 일도
+  // 없던 20분 뒤에도 collectedAt 은 20분 전이다. 값이 맞는데 실패로 찍힌다.
+  //
+  // 이 검사가 잡아야 하는 것은 "몇 분 늦었나"가 아니라 "수집이 멈췄나"다.
+  // 멈추면 시간 단위로 벌어지므로 한 시간을 경계로 둔다.
+  const cycle = (payload.collectIntervals && payload.collectIntervals.realtimeMinutes) || 5;
+  const staleLimit = Math.max(cycle * 12, 60);
   const lagProblems = [];
 
-  console.log("서점 기준 ↔ 우리 수집 시차");
+  console.log(
+    `우리 데이터가 얼마나 묵었나 (수집 주기 ${cycle}분 · ${staleLimit}분 넘으면 수집이 멈춘 것으로 본다)`
+  );
   for (const store of payload.storeStatus || []) {
     for (const group of store.groups || []) {
-      const m = String(group.sourceStamp || "").match(
-        /(20\d{2})\.(\d{2})\.(\d{2})\s+(\d{1,2}):(\d{2})/
-      );
-      if (!m) continue; // 주·날짜 단위 기준이거나 미표기 — 분으로 잴 것이 없다
-
-      const storeAt = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4] - 9, +m[5]);
       const ours = Date.parse(group.collectedAt || "");
       if (!Number.isFinite(ours)) continue;
 
-      const minutes = Math.round((ours - storeAt) / 60000);
+      const age = Math.round((Date.now() - ours) / 60000);
       const where = `${store.storeId} ${group.label}`;
+      const basis = group.sourceStamp ? `  (서점 기준 ${group.sourceStamp})` : "";
 
-      if (minutes <= LAG_LIMIT) {
-        console.log(`  OK     ${where.padEnd(18)} ${minutes}분`);
-      } else if (minutes >= STORE_BEHIND) {
-        console.log(
-          `  서점   ${where.padEnd(18)} ${minutes}분 — 서점이 아직 ${group.sourceStamp} 기준을 최신으로 내주는 중`
-        );
+      if (age <= staleLimit) {
+        console.log(`  OK     ${where.padEnd(18)} ${age}분 전${basis}`);
       } else {
-        console.log(`  늦음   ${where.padEnd(18)} ${minutes}분 — 기준 ${LAG_LIMIT}분 초과`);
-        lagProblems.push(`${where} 시차 ${minutes}분`);
+        console.log(`  묵음   ${where.padEnd(18)} ${age}분 전 — ${staleLimit}분 초과${basis}`);
+        lagProblems.push(`${where} ${age}분 전`);
       }
     }
   }
@@ -221,12 +225,12 @@ async function storeRanks(list) {
   }
 
   if (lagProblems.length) {
-    console.log("\n수집이 늦었다 — 폴링 정렬을 봐야 한다:");
+    console.log("\n데이터가 묵었다 — 수집이 돌고 있는지 봐야 한다:");
     lagProblems.forEach((n) => console.log(`  ${n}`));
     process.exit(1);
   }
 
-  console.log("\n고정 목록은 서점과 일치하고, 시차도 기준 안이다.");
+  console.log("\n고정 목록은 서점과 일치하고, 데이터도 한 주기 안이다.");
 })().catch((error) => {
   console.error("검사 자체가 실패했습니다:", error);
   process.exit(2);
