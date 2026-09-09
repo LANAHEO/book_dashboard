@@ -869,23 +869,26 @@ async function readBootstrapSnapshot() {
   }
 }
 
+// 파일 캐시와 Supabase 는 서로 다른 저장소다. 예전에는 파일 캐시를 끄는
+// 가드가 이 함수 맨 위에 있어서, Vercel(FILE_CACHE_ENABLED=false)에서는
+// Supabase 저장까지 같이 건너뛰었다. 예외도 안 났으니 /api/collect 는 계속
+// ok:true 를 돌려줬고, 화면은 로컬 PC 가 마지막으로 남긴 스냅샷에 멈춰 있었다.
+// 10분마다 수집해도 값이 안 바뀌던 이유가 이것이다.
 async function writeDashboardSnapshot(payload) {
-  if (!FILE_CACHE_ENABLED) {
-    return;
-  }
-
-  try {
-    await fs.mkdir(SOURCE_CACHE_DIR, { recursive: true });
-    await fs.writeFile(
-      path.join(SOURCE_CACHE_DIR, "dashboard-latest.json"),
-      JSON.stringify({
-        payload,
-        updatedAt: new Date().toISOString()
-      }),
-      "utf8"
-    );
-  } catch (error) {
-    console.error("[cache] failed to persist dashboard snapshot:", error);
+  if (FILE_CACHE_ENABLED) {
+    try {
+      await fs.mkdir(SOURCE_CACHE_DIR, { recursive: true });
+      await fs.writeFile(
+        path.join(SOURCE_CACHE_DIR, "dashboard-latest.json"),
+        JSON.stringify({
+          payload,
+          updatedAt: new Date().toISOString()
+        }),
+        "utf8"
+      );
+    } catch (error) {
+      console.error("[cache] failed to persist dashboard snapshot:", error);
+    }
   }
 
   if (!getSupabaseConfig()) {
@@ -1115,20 +1118,22 @@ function buildNameLookup(sections) {
   return { stores, lists };
 }
 
+// writeDashboardSnapshot 과 같은 실수가 여기에도 있었다 — 파일 캐시 가드가
+// Supabase 저장까지 막아서, Vercel 에서는 목록 캐시가 한 번도 남지 않았다.
+// readPersistedSource 는 Supabase 를 먼저 보므로, 저장이 안 되면 모든 호출이
+// 캐시 없이 서점 59곳을 다시 긁는다. 수집 한 번에 130~150초가 걸린 이유다.
 async function writePersistedSource(id, payload, expiresAt) {
-  if (!FILE_CACHE_ENABLED) {
-    return;
-  }
-
-  try {
-    await fs.mkdir(SOURCE_CACHE_DIR, { recursive: true });
-    await fs.writeFile(
-      getSourceCachePath(id),
-      JSON.stringify({ payload, expiresAt }),
-      "utf8"
-    );
-  } catch (error) {
-    console.error(`[cache] failed to persist ${id}:`, error);
+  if (FILE_CACHE_ENABLED) {
+    try {
+      await fs.mkdir(SOURCE_CACHE_DIR, { recursive: true });
+      await fs.writeFile(
+        getSourceCachePath(id),
+        JSON.stringify({ payload, expiresAt }),
+        "utf8"
+      );
+    } catch (error) {
+      console.error(`[cache] failed to persist ${id}:`, error);
+    }
   }
 
   try {
