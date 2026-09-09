@@ -290,6 +290,21 @@ function rankHref(item) {
   return item.listUrl.split("#")[0] + fragment;
 }
 
+// 실시간 순위는 서점에서 계속 바뀐다. 우리가 보여 주는 값은 "11:00 기준"처럼
+// 특정 시점의 것이고, 누르면 열리는 페이지는 지금 값이라 다를 수밖에 없다.
+// 실제로 재 보니 주간·일간·분야 목록은 32건 전부 링크가 연 화면과 같았고,
+// 어긋난 12건은 전부 실시간이었다. 그래서 실시간 칸에는 기준 시각과 함께
+// "지금 값과 다를 수 있다"를 안내에 붙인다 — 숫자만 두면 오류로 읽힌다.
+function rankTimingNote(item) {
+  if (!item.realtime) {
+    return "";
+  }
+
+  const stamp = item.sourceStamp ? `${item.sourceStamp} 기준` : "수집 시점 기준";
+
+  return ` · ${stamp}(서점 페이지는 지금 값이라 다를 수 있습니다)`;
+}
+
 function searchableText(item) {
   return [item.title, item.meta, item.secondary, item.publisher]
     .filter(Boolean)
@@ -316,7 +331,7 @@ function renderItem(item) {
   // 목록 위치를 못 만들었을 때만 상품 상세로 떨어진다.
   const href = rankHref(item);
   const hint = item.listUrl
-    ? `${item.title} · ${item.rank}위 위치로 이동`
+    ? `${item.title} · ${item.rank}위 위치로 이동${rankTimingNote(item)}`
     : `${item.title} 상세 페이지 열기`;
   const titleStart = href
     ? `<a class="book-title" href="${escapeHtml(href)}" target="_blank" rel="noreferrer" title="${escapeHtml(hint)}">`
@@ -739,7 +754,7 @@ function renderFocusLiveBox(store, qualifier, appearance) {
   const href = rankHref(appearance);
 
   return href
-    ? `<a class="focus-live-box"${accent} href="${escapeHtml(href)}" target="_blank" rel="noreferrer" title="${escapeHtml(`${source} ${appearance.rank}위 위치로 이동${deltaHint(appearance)}`)}">${body}</a>`
+    ? `<a class="focus-live-box"${accent} href="${escapeHtml(href)}" target="_blank" rel="noreferrer" title="${escapeHtml(`${source} ${appearance.rank}위 위치로 이동${deltaHint(appearance)}${rankTimingNote(appearance)}`)}">${body}</a>`
     : `<div class="focus-live-box"${accent}>${body}</div>`;
 }
 
@@ -780,7 +795,7 @@ function renderFocusBarCell(store, appearance) {
   const source = [appearance.storeName, appearance.listName].filter(Boolean).join(" · ");
   const body = `${escapeHtml(appearance.rank)}<span>위</span>${renderCellDelta(appearance)}`;
   const href = rankHref(appearance);
-  const hint = `${source} ${appearance.rank}위 위치로 이동${deltaHint(appearance)}`;
+  const hint = `${source} ${appearance.rank}위 위치로 이동${deltaHint(appearance)}${rankTimingNote(appearance)}`;
 
   return href
     ? `<a class="focus-bar-cell"${accent} href="${escapeHtml(href)}" target="_blank" rel="noreferrer" title="${escapeHtml(hint)}">${body}</a>`
@@ -973,6 +988,10 @@ function renderFocusHowItWorks() {
       )}시간마다입니다. 수집 서버 사정으로 가끔 더 걸릴 수 있습니다.`
     ],
     [
+      "서점과 견줄 때",
+      "주간·일간·분야 순위는 서점 페이지와 <b>정확히 같습니다.</b> 반면 <b>실시간</b>은 서점이 계속 바꾸는 값이라, 여기 숫자는 <b>기준 시각의 것</b>이고 눌러서 열린 페이지는 지금 값이라 다를 수 있습니다. 각 순위에 커서를 올리면 그 값의 기준 시각이 나옵니다."
+    ],
+    [
       "화면 읽는 법",
       [
         "<b>100위 밖</b>은 그 순위 100위 안에 이 책이 없다는 뜻입니다.",
@@ -1074,7 +1093,7 @@ function renderFocusBoardV2() {
               liveBest;
             const titleHref = titleTarget ? rankHref(titleTarget) : book.link || "";
             const titleHint = titleTarget
-              ? `${titleTarget.storeName} · ${titleTarget.listName} · ${titleTarget.rank}위 위치로 이동`
+              ? `${titleTarget.storeName} · ${titleTarget.listName} · ${titleTarget.rank}위 위치로 이동${rankTimingNote(titleTarget)}`
               : `${book.title} 상세 페이지 열기`;
 
             const droppedOut = renderDroppedOut(book);

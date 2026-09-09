@@ -158,6 +158,28 @@ const FOCUS_BOOK_TITLES = [
   "스페이스X 일론 머스크"
 ];
 const FOCUS_CATALOG_ID = "publisher-catalog";
+
+// 첫 화면 맨 앞에 고정할 도서. 적은 순서가 화면 순서다. 여기 없는 책은 그
+// 아래에서 출간 최신순으로 선다.
+//
+// 제목은 서점마다 부제·판형이 붙어 조금씩 다르므로(예: "문해내공" vs
+// "문해내공(양장)") 정확히 같은지 대신 "앞에서부터 일치하는지"로 본다.
+// 카탈로그가 준 제목이 기준이다.
+const FOCUS_PINNED_TITLES = ["옥스브리지의 철학 수업", "문해내공"];
+
+const FOCUS_PINNED_KEYS = FOCUS_PINNED_TITLES.map((title) =>
+  normalizeTitleKey(title)
+);
+
+// 고정 목록에서 몇 번째인지. 없으면 고정 도서 전체보다 뒤로 보낸다.
+function focusPinRank(title) {
+  const key = normalizeTitleKey(title);
+  const index = FOCUS_PINNED_KEYS.findIndex(
+    (pinned) => key === pinned || key.startsWith(pinned)
+  );
+
+  return index === -1 ? FOCUS_PINNED_KEYS.length : index;
+}
 const FOCUS_CATALOG_LIMIT = 20;
 const FOCUS_CATALOG_TTL_MS = 6 * 60 * 60 * 1000;
 const FOCUS_CATALOG_RETRY_MS = 10 * 60 * 1000;
@@ -2496,6 +2518,10 @@ function buildFocusBooks(sections, catalog = []) {
             categoryGroupKeys: list.groupKeys || [],
             // 같은 자리에 목록이 둘일 때(교보 종합 주간 vs 온라인 주간) 주인 표시.
             primary: list.primary === true,
+            // 서점이 밝힌 집계 기준("2026.09.09 11:00"). 실시간 순위를 누르면
+            // 열리는 페이지는 "지금" 값이라 우리 숫자와 다를 수밖에 없는데,
+            // 기준 시각을 같이 보여 주지 않으면 그게 오류로 읽힌다.
+            sourceStamp: list.sourceStamp || "",
             // 카드의 칩 순서를 주간→일간→분야별→실시간으로 세우려면 화면도
             // 이 목록이 어느 기간인지 알아야 한다. 목록 이름만으로는 갈리지
             // 않는다 — 예스24 일간은 이름이 "일별 베스트셀러"다.
@@ -2559,14 +2585,17 @@ function buildFocusBooks(sections, catalog = []) {
       };
     })
     .sort((a, b) => {
-      // 순위에 든 도서를 앞으로 모으고, 출간 최신순은 그 안에서만 적용한다.
-      const rankedOrder =
-        Number(b.appearanceCount > 0) - Number(a.appearanceCount > 0);
+      // 고정 지정한 도서가 맨 앞. 지정한 순서를 그대로 지킨다 — 순위에 들었는지,
+      // 언제 나왔는지와 무관하게 늘 같은 자리에 있어야 찾는 사람이 헤매지 않는다.
+      const pinOrder = focusPinRank(a.title) - focusPinRank(b.title);
 
-      if (rankedOrder !== 0) {
-        return rankedOrder;
+      if (pinOrder !== 0) {
+        return pinOrder;
       }
 
+      // 그 아래는 출간 최신순이 기본이다. 예전에는 "순위에 든 책"을 먼저 모으고
+      // 그 안에서만 출간순을 적용해서, 신간이 아직 순위에 못 들었으면 순위권
+      // 밖 도서 뒤로 밀려 첫 화면에서 사라졌다.
       const publishedOrder = String(b.latestPublishedAt || "").localeCompare(
         String(a.latestPublishedAt || "")
       );
