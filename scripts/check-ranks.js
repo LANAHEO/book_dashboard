@@ -166,6 +166,44 @@ async function storeRanks(list) {
     }
   }
 
+  // ── 서점 기준 시각과 우리 수집 시각의 차이 ──────────────────────────
+  // 요구 기준은 5분 이내다. 다만 "우리가 늦은 것"과 "서점이 아직 새 기준을
+  // 올리지 않은 것"은 다른 문제다. 예스24는 한 시간 전 기준을 최신으로
+  // 내주는 일이 있어서(17:15에 16:00 기준), 그건 우리가 더 자주 가져와도
+  // 줄지 않는다. 한 주기(60분)를 넘는 차이는 서점 쪽으로 본다.
+  const LAG_LIMIT = 5;
+  const STORE_BEHIND = 60;
+  const lagProblems = [];
+
+  console.log("서점 기준 ↔ 우리 수집 시차");
+  for (const store of payload.storeStatus || []) {
+    for (const group of store.groups || []) {
+      const m = String(group.sourceStamp || "").match(
+        /(20\d{2})\.(\d{2})\.(\d{2})\s+(\d{1,2}):(\d{2})/
+      );
+      if (!m) continue; // 주·날짜 단위 기준이거나 미표기 — 분으로 잴 것이 없다
+
+      const storeAt = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4] - 9, +m[5]);
+      const ours = Date.parse(group.collectedAt || "");
+      if (!Number.isFinite(ours)) continue;
+
+      const minutes = Math.round((ours - storeAt) / 60000);
+      const where = `${store.storeId} ${group.label}`;
+
+      if (minutes <= LAG_LIMIT) {
+        console.log(`  OK     ${where.padEnd(18)} ${minutes}분`);
+      } else if (minutes >= STORE_BEHIND) {
+        console.log(
+          `  서점   ${where.padEnd(18)} ${minutes}분 — 서점이 아직 ${group.sourceStamp} 기준을 최신으로 내주는 중`
+        );
+      } else {
+        console.log(`  늦음   ${where.padEnd(18)} ${minutes}분 — 기준 ${LAG_LIMIT}분 초과`);
+        lagProblems.push(`${where} 시차 ${minutes}분`);
+      }
+    }
+  }
+  console.log("");
+
   console.log(`고정 목록(주간·일간·분야) 일치 ${fixedOk}건 · 불일치 ${fixedProblems.length}건`);
   console.log(`실시간 시차 ${realtimeDrift.length}건 (서점이 계속 바꾸는 값이라 정상)`);
   console.log(`확인 못 함 ${skipped}건 (교보는 목록을 HTML로 주지 않음)`);
@@ -182,7 +220,13 @@ async function storeRanks(list) {
     process.exit(1);
   }
 
-  console.log("\n고정 목록은 서점과 일치한다.");
+  if (lagProblems.length) {
+    console.log("\n수집이 늦었다 — 폴링 정렬을 봐야 한다:");
+    lagProblems.forEach((n) => console.log(`  ${n}`));
+    process.exit(1);
+  }
+
+  console.log("\n고정 목록은 서점과 일치하고, 시차도 기준 안이다.");
 })().catch((error) => {
   console.error("검사 자체가 실패했습니다:", error);
   process.exit(2);
