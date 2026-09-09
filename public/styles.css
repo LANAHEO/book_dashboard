@@ -2862,18 +2862,21 @@ a.focus-live-box:focus-visible {
   color: var(--muted);
 }
 
-/* 칸을 색으로 채우지는 않는다 — 카드 하나에 네 줄 × 세 칸이라 배경을 칠하면
-   카드가 색 밭이 되고 숫자가 뒤로 밀렸다. 대신 숫자 자체에 그 서점 색을
-   입힌다. 위 네모의 서점 이름과 같은 계산식(78% 섞기)을 쓰므로 둘이 같은
-   서점을 가리키는 것으로 읽히고, 작은 글씨라도 잉크를 섞어 두면 읽힌다. */
+/* 순위가 있는 칸은 네모로 둘러싼다. 네모가 있어야 "이 자리에 순위가 있다"가
+   한눈에 보이고, 옆의 "100위 밖"(네모 없는 회색 글씨)과 갈린다.
+   다만 네모를 서점 색으로 채우지는 않는다 — 카드 하나에 네 줄 × 세 칸이라
+   배경을 칠하면 카드가 색 밭이 되고 숫자가 뒤로 밀렸다.
+   서점 구분은 숫자에만 준다. 위 네모의 서점 이름과 같은 계산식(78% 섞기)을
+   쓰므로 둘이 같은 서점을 가리키는 것으로 읽힌다. */
 .focus-bar-cell:not(.is-empty) {
-  border: 1px solid transparent;
+  border: 1px solid var(--line-soft);
+  background: #fff;
   color: color-mix(in srgb, var(--store-accent, var(--ink)) 78%, var(--ink));
 }
 
 a.focus-bar-cell:hover,
 a.focus-bar-cell:focus-visible {
-  border-color: color-mix(in srgb, var(--store-accent, var(--ink)) 40%, var(--line));
+  border-color: color-mix(in srgb, var(--store-accent, var(--ink)) 45%, var(--line));
   outline: none;
 }
 
