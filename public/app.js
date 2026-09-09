@@ -189,22 +189,21 @@ function focusBookMatchesSearch(book) {
   return parts.filter(Boolean).join(" ").toLowerCase().includes(state.search);
 }
 
+// 순서는 서버가 정한 그대로 쓴다 — 주요 도서가 맨 앞, 그 뒤는 출간 최신순.
+//
+// 여기서 다시 정렬하지 않는다. 예전에는 "순위에 든 책"을 앞으로 모으는 정렬이
+// 한 줄 있었는데, 그게 출간순을 깨뜨렸다. 노출 0곳인 신간이 몇 달 전에 나온
+// 순위권 도서 뒤로 밀려서, 첫 화면에서 최신 출간이 사라졌다. 서버에서 같은
+// 묶음을 지웠지만 화면 쪽이 남아 있어 화면만 계속 어긋나 보였다.
 function getVisibleFocusBooks() {
-  return (
-    (state.dashboard?.focusBooks || [])
-      .filter(focusBookMatchesSearch)
-      .map((book) => ({
-        ...book,
-        appearances: filterBySelectedStore(book.appearances || []),
-        // 이탈도 같이 걸러야 교보를 골랐을 때 알라딘 이탈이 섞이지 않는다.
-        droppedOut: filterBySelectedStore(book.droppedOut || [])
-      }))
-      // 서점을 골라 보면 노출이 사라지는 책이 생기므로, 화면 기준으로 다시 뒤로 보낸다.
-      // 정렬이 안정적이라 각 묶음 안의 출간 최신순은 그대로 유지된다.
-      .sort(
-        (a, b) => Number(b.appearances.length > 0) - Number(a.appearances.length > 0)
-      )
-  );
+  return (state.dashboard?.focusBooks || [])
+    .filter(focusBookMatchesSearch)
+    .map((book) => ({
+      ...book,
+      appearances: filterBySelectedStore(book.appearances || []),
+      // 이탈도 같이 걸러야 교보를 골랐을 때 알라딘 이탈이 섞이지 않는다.
+      droppedOut: filterBySelectedStore(book.droppedOut || [])
+    }));
 }
 
 // 칩 순서는 순위 종류로 먼저 정한다: 주간 → 일간 → 월간 → 분야별 → 실시간.
