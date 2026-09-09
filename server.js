@@ -1322,6 +1322,13 @@ function makeKyoboRankUrl(sourceUrl, rank) {
 // per=60 5.5초, per=40 3.7초. 그래서 20 단위로 필요한 만큼만 올린다.
 const KYOBO_PAGE_STEP = 20;
 
+// per 을 순위에 딱 맞추면 그 책이 페이지에서 빠진다. 교보가 요청한 수보다 적게
+// 그리기 때문이다 — 실측 per=20→17권, per=45→43권, per=56→54권, per=100→93권.
+// 그래서 순위에 그만큼 여유를 얹어서 요청한다. 12%+3은 위 실측(최대 7% 누락)에
+// 배를 둔 값이다. 여유를 안 뒀을 때 18위·57위 책이 실제로 페이지에서 사라졌다.
+const KYOBO_HIDDEN_RATE = 0.12;
+const KYOBO_HIDDEN_FLOOR = 3;
+
 function makeKyoboPageUrl(url, rank) {
   const pageUrl = new URL(url);
 
@@ -1333,9 +1340,10 @@ function makeKyoboPageUrl(url, rank) {
     return pageUrl.toString();
   }
 
+  const needed = Math.ceil(rank * (1 + KYOBO_HIDDEN_RATE)) + KYOBO_HIDDEN_FLOOR;
   const per = Math.min(
     KYOBO_MAX_PAGE_SIZE,
-    Math.ceil(rank / KYOBO_PAGE_STEP) * KYOBO_PAGE_STEP
+    Math.ceil(needed / KYOBO_PAGE_STEP) * KYOBO_PAGE_STEP
   );
 
   pageUrl.searchParams.set("page", "1");
