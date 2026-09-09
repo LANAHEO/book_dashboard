@@ -610,12 +610,22 @@ function focusCardPlan(book) {
 
   const bars = FOCUS_BAR_ROWS.map((row) => ({
     row,
-    cells: FOCUS_STORE_COLUMNS.map((store) => ({
-      store,
-      appearance:
-        storeBest(store.id, (item) => rowMatch(row, item) && item.primary) ||
-        storeBest(store.id, (item) => rowMatch(row, item))
-    }))
+    cells: FOCUS_STORE_COLUMNS.map((store) => {
+      const primary = storeBest(
+        store.id,
+        (item) => rowMatch(row, item) && item.primary
+      );
+
+      // 주인 목록이 정해진 자리에서는 그 목록만 본다. 대체하면 줄 이름과
+      // 다른 목록의 순위가 나간다 — "주간종합순위 57위"가 실은 교보
+      // 온라인 베스트 주간 57위였고, 교보 종합 주간을 열어 본 사람은 그
+      // 순위를 찾을 수 없었다. 주인 목록에 없으면 없는 것이 사실이다.
+      if (primary || hasPrimaryList(store.id, row)) {
+        return { store, appearance: primary };
+      }
+
+      return { store, appearance: storeBest(store.id, (item) => rowMatch(row, item)) };
+    })
   }));
 
   const drawn = new Set();
@@ -636,6 +646,26 @@ function focusCardPlan(book) {
 // 보여 줬다. 알라딘 경제경영 주간에서 그 책은 47위다. 서점과 나란히 놓고 보면
 // 그냥 틀린 숫자다. 그래서 여기서 분야 묶음 하나를 정하고, 그 뒤로는 전부
 // 그 묶음만 본다.
+// 그 (서점·줄) 자리에 주인 목록이 정해져 있는지. 책이 그 목록에 들었는지와는
+// 다른 질문이다 — 안 들었으면 "100위 밖"이 맞는 답이고, 다른 목록으로 대체하면
+// 줄 이름과 다른 순위가 나간다.
+//
+// 첫 화면(부트스트랩)에는 목록이 실려 오지 않는다. 그때는 알 수 없으므로
+// false 를 돌려 예전처럼 동작하게 두고, 전체 응답이 도착하면 바로잡힌다.
+function hasPrimaryList(storeId, row) {
+  const sections = (state.dashboard && state.dashboard.sections) || [];
+
+  return sections.some((section) =>
+    (section.lists || []).some(
+      (list) =>
+        list.storeId === storeId &&
+        list.primary === true &&
+        list.group === row.group &&
+        list.period === row.period
+    )
+  );
+}
+
 function focusCategoryKey(appearances) {
   const categories = sortAppearances(
     appearances.filter(
@@ -999,66 +1029,6 @@ function summarizeFocusDeltas(books) {
   return summary;
 }
 
-// 이 화면이 어떻게 만들어지는지를 화면 안에서 밝힌다. 숫자가 서점과 다르게
-// 보일 때 "왜 다른지"를 물어볼 곳이 없으면 대시보드를 못 믿게 된다 — 무엇을
-// 언제 어디서 가져오는지, 순위가 없을 때 무엇이라 적는지를 여기서 답한다.
-//
-// 주기·범위 같은 숫자를 문장에 직접 적지 않고 서버가 내려준 값을 쓴다. 두 곳에
-// 적어 두면 서버 설정을 바꿀 때 문구만 옛말로 남는다 — 이 화면에서 실제로
-// 겪은 사고다("실시간 5분"이라 적어 놓고 60분마다 수집했다).
-function renderFocusHowItWorks() {
-  const dashboard = state.dashboard || {};
-  const baseline = dashboard.deltaBaselineAt;
-  const intervals = dashboard.collectIntervals || {};
-  const realtimeMinutes = intervals.realtimeMinutes || 10;
-  const standardHours = intervals.standardHours || 6;
-
-  const rows = [
-    [
-      "어떤 책이 오르나",
-      `${WATCH_PUBLISHER_NAME}가 펴낸 책을 출판사 목록에서 자동으로 불러옵니다. 순위에 든 책을 위에 두고, 그 안에서 출간 최신순입니다.`
-    ],
-    [
-      "순위를 어디서 찾나",
-      "교보문고·예스24·알라딘 세 곳의 종합·분야 순위(주간·일간·실시간)에서 이 책을 찾습니다. 각 순위는 100위까지 봅니다."
-    ],
-    [
-      "얼마나 자주 가져오나",
-      `${escapeHtml(
-        realtimeMinutes
-      )}분마다 세 서점의 실시간 순위가 바뀌었는지 확인하고, 바뀌었으면 전체를 다시 가져옵니다. 주간·일간처럼 하루 단위로 바뀌는 순위는 ${escapeHtml(
-        standardHours
-      )}시간마다입니다. 수집 서버 사정으로 가끔 더 걸릴 수 있습니다.`
-    ],
-    [
-      "서점과 견줄 때",
-      "주간·일간·분야 순위는 서점 페이지와 <b>정확히 같습니다.</b> 반면 <b>실시간</b>은 서점이 계속 바꾸는 값이라, 여기 숫자는 <b>기준 시각의 것</b>이고 눌러서 열린 페이지는 지금 값이라 다를 수 있습니다. 각 순위에 커서를 올리면 그 값의 기준 시각이 나옵니다."
-    ],
-    [
-      "화면 읽는 법",
-      [
-        "<b>100위 밖</b>은 그 순위 100위 안에 이 책이 없다는 뜻입니다.",
-        "한 책이 여러 분야에 동시에 오르므로, 카드마다 분야를 하나 정해 분야 순위 두 줄은 그 분야만 보여줍니다.",
-        baseline
-          ? `<b>▲▼</b>와 <b>NEW</b>는 ${escapeHtml(
-              formatDateTime(baseline)
-            )} 수집과 견준 변화입니다.`
-          : ""
-      ]
-        .filter(Boolean)
-        .join(" ")
-    ]
-  ];
-
-  return `
-    <dl class="focus-how">
-      ${rows
-        .map(([term, detail]) => `<dt>${escapeHtml(term)}</dt><dd>${detail}</dd>`)
-        .join("")}
-    </dl>
-  `;
-}
-
 function renderFocusDeltaSummary(books) {
   // 비교할 직전 수집이 없으면(첫 수집) 0을 늘어놓지 않고 줄 자체를 뺀다.
   if (!(state.dashboard && state.dashboard.deltaBaselineAt)) {
@@ -1089,7 +1059,6 @@ function renderFocusBoardV2() {
         <div>
           <div class="section-label">Sangsang Square</div>
           <h2>상상스퀘어 도서 순위</h2>
-          ${renderFocusHowItWorks()}
           ${renderFocusDeltaSummary(focusBooks)}
         </div>
         <span class="section-count">${
@@ -1149,15 +1118,17 @@ function renderFocusBoardV2() {
 
             return `
               <article class="focus-card${book.pinned ? " is-pinned" : ""}">
-                ${book.pinned
-                  ? `<span class="focus-pin" title="첫 화면 맨 앞에 고정해 둔 도서입니다">주요 도서</span>`
-                  : ""}
                 <div class="focus-head">
-                  <h3 class="focus-title">
-                    ${titleHref
-                      ? `<a href="${escapeHtml(titleHref)}" target="_blank" rel="noreferrer" title="${escapeHtml(titleHint)}">${escapeHtml(book.title)}</a>`
-                      : escapeHtml(book.title)}
-                  </h3>
+                  <div class="focus-title-row">
+                    <h3 class="focus-title">
+                      ${titleHref
+                        ? `<a href="${escapeHtml(titleHref)}" target="_blank" rel="noreferrer" title="${escapeHtml(titleHint)}">${escapeHtml(book.title)}</a>`
+                        : escapeHtml(book.title)}
+                    </h3>
+                    ${book.pinned
+                      ? `<span class="focus-pin" title="첫 화면 맨 앞에 고정해 둔 도서입니다">주요 도서</span>`
+                      : ""}
+                  </div>
                   <p class="focus-published">${escapeHtml(formatPublishedDate(book.latestPublishedAt))}</p>
                 </div>
                 <div class="focus-live-row">

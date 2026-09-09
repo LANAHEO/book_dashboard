@@ -620,45 +620,6 @@ body {
   color: var(--danger);
 }
 
-/* 이 화면이 어떻게 만들어지는지 밝히는 설명란. 항목마다 "무엇을 묻는지"(dt)와
-   "그 답"(dd)이 짝이라 목록 대신 dl로 짠다. 좁은 화면에서는 한 줄에 못 담아
-   물음을 윗줄로 올린다. */
-.focus-how {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 3px 10px;
-  margin: 9px 0 0;
-  color: var(--muted);
-  font-size: 12.5px;
-  line-height: 1.55;
-}
-
-.focus-how dt {
-  color: var(--muted-strong);
-  font-weight: 800;
-  white-space: nowrap;
-}
-
-.focus-how dd {
-  margin: 0;
-}
-
-.focus-how b {
-  color: var(--ink);
-  font-weight: 800;
-}
-
-@media (max-width: 640px) {
-  .focus-how {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 1px;
-  }
-
-  .focus-how dd {
-    margin-bottom: 7px;
-  }
-}
-
 .rank-delta {
   margin-left: 6px;
   padding: 1px 5px;
@@ -1778,8 +1739,9 @@ a {
   color: var(--ink);
 }
 
-/* 설명란(.focus-how)은 읽는 법을 알려 주고, 이 줄은 이번 수집의 결과를 말한다.
-   같은 자리에 겹치므로 잉크 농도로만 순서를 준다.
+/* 제목 바로 아래에서 이번 수집의 결과를 한 줄로 말한다. 예전에는 위에 읽는
+   법을 적은 설명란이 함께 있었고 잉크 농도로 둘의 순서를 줬는데, 설명란을
+   걷어낸 지금은 제목 다음에 이 줄만 남는다.
    `.section-heading p`가 더 구체적이라 클래스만으로는 색이 안 먹는다 — p를 같이 적는다. */
 .section-heading p.focus-delta-summary {
   margin: 6px 0 0;
@@ -1828,32 +1790,30 @@ a {
   color: var(--ink);
 }
 
-/* "주요 도서" 표시. 카드 오른쪽 위 모서리에 걸쳐 둔다 — 제목·출간일 자리를
-   밀지 않으면서, 카드를 훑을 때 가장 먼저 눈에 걸리는 자리다.
-   카드가 position:relative 를 갖고 있어야 이 좌표가 카드 기준이 된다. */
-.focus-card {
-  position: relative;
-}
-
+/* "주요 도서" 표시. 카드 테두리에 걸치던 것을 안으로 들여, 제목 줄 오른쪽에
+   나란히 세운다 — 카드 밖으로 나가 있으면 위 카드와의 사이 여백에 떠서 어느
+   카드의 표시인지 한눈에 안 붙는다. 색은 팔레트에서 가장 센 --danger다.
+   이 화면의 흑백 크롬 안에서 유일하게 튀는 색이라 카드를 세로로 훑을 때 가장
+   먼저 걸린다. 하락·이탈 표시도 같은 빨강이지만 그쪽은 옅은 바탕에 글씨만
+   빨강이고(.rank-delta.is-down 등), 이것만 빨강을 꽉 채운 알약이라 갈린다. */
 .focus-pin {
-  position: absolute;
-  top: -9px;
-  right: 12px;
-  z-index: 1;
+  flex: none;
+  /* 제목 첫 줄(21px × 1.3)의 글자 높이에 배지 가운데를 맞추는 값이다.
+     0이면 배지 윗변이 제목 윗변과 붙어 눈으로는 배지가 떠 보인다. */
+  margin-top: 4px;
   padding: 3px 9px;
   border-radius: 999px;
-  background: var(--primary);
+  background: var(--danger);
   color: #fff;
   font-size: 10.5px;
   font-weight: 950;
   letter-spacing: -0.01em;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.16);
 }
 
 /* 고정 도서 카드는 테두리로도 한 번 더 갈라 준다. 표시만 붙이면 카드를 세로로
    훑을 때 배지가 제목 뒤로 묻힌다. */
 .focus-card.is-pinned {
-  border-color: color-mix(in srgb, var(--primary) 45%, var(--line));
+  border-color: color-mix(in srgb, var(--danger) 40%, var(--line));
 }
 
 /* 제목과 출간일이 한 덩어리다. min-height는 제목 두 줄과 출간일 한 줄 자리를
@@ -1870,8 +1830,19 @@ a {
   justify-content: space-between;
 }
 
-/* 카드의 첫 줄이자 가장 큰 글씨. */
+/* 제목과 "주요 도서" 표시가 한 줄에 선다. 표시가 없는 카드에서는 제목 혼자
+   그대로 폭을 다 쓰므로, 고정 도서와 아닌 도서의 제목 시작점이 같다. */
+.focus-title-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+/* 카드의 첫 줄이자 가장 큰 글씨. min-width:0 은 긴 제목이 배지를 카드 밖으로
+   밀어내지 않고 제 자리에서 줄바꿈하게 하는 flex 자식의 최소 폭 해제다. */
 .focus-title {
+  min-width: 0;
   margin: 0;
   font-size: 21px;
   line-height: 1.3;
