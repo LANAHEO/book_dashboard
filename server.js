@@ -1268,27 +1268,7 @@ function describeRankGap(items, perPage) {
 // 조각도 그대로 붙이지만, 이제는 실패해도 책이 이미 눈앞에 있다.
 const KYOBO_MAX_PAGE_SIZE = 100;
 
-// 여백은 0이다. 한때 3이었는데, 그건 교보 목록의 한 줄이 얼마나 큰지 모르고
-// 정한 값이었다. 헤드리스 크롬으로 재 보니 교보는 페이지 머리글만 700px이고
-// 한 줄이 약 430px이다 — 목표보다 3줄 앞에서 시작하면 제목이 1719px 아래에
-// 놓인다. 화면 안에 들어오질 않는다. 같은 링크를 여백별로 재면 이렇다.
-//
-//   여백 3 (per=16)   제목 1719px
-//   여백 1 (per=18)   제목 1107px
-//   여백 0 (per=19)   제목  798px
-//
-// 순위가 올라 창을 벗어날 위험은 남는다(실측 최대 상승폭 일간 2칸, 실시간 3칸).
-// 그래도 0을 고른 이유는, 어차피 교보에서는 형광펜이 켜지지 않아 위치가 전부이기
-// 때문이다. 벗어나 봐야 그 책은 바로 윗줄에 있고, 1719px을 매번 내려가는 것보다
-// 낫다.
-const KYOBO_RANK_MARGIN = 0;
-
-// 창이 목표 순위를 담으려면 2 * per >= rank 여야 한다. 여백 0에서는 2위부터
-// 성립한다. 1위는 첫 쪽 맨 윗줄이라 창이 필요 없다.
-const KYOBO_WINDOW_MIN_RANK = 2 * KYOBO_RANK_MARGIN + 2;
-const KYOBO_HEAD_PAGE_SIZE = 20;
-
-// 그런데 창을 만들려고 붙인 page=2 가 형광펜이 안 켜지던 진짜 원인이었다.
+// 창을 만들려고 붙인 page=2 가 형광펜이 안 켜지던 원인이기도 했다.
 // 교보 실시간 페이지는 첫 쪽을 서버에서 그려 보낸다 — 파라미터가 없거나
 // page=1 이면 1~20위 제목이 HTML 안에 글자로 들어 있다. 확인한 그대로다:
 //
@@ -1321,6 +1301,27 @@ function makeKyoboRankUrl(sourceUrl, rank) {
   return makeKyoboPageUrl(sourceUrl, rank);
 }
 
+// 창(page=2&per=순위-1)은 버렸다. 그 쪽의 첫 항목을 우리가 고를 수 있다는 전제가
+// 틀렸다. 헤드리스로 재 보니 목표보다 1~5칸 앞에서 시작한다:
+//
+//   per=4  → 5위부터일 줄 알았는데 4위부터,  4권 표시
+//   per=17 → 18위        "         15위부터, 17권
+//   per=45 → 46위        "         42위부터, 43권
+//   per=56 → 57위        "         52위부터, 54권
+//
+// 교보 화면이 목록에서 일부 상품을 빼고 그리기 때문이다(per=56 인데 54권만
+// 나온다). 몇 개를 뺄지는 우리가 알 수 없으니 계산으로는 맞출 수 없다. 게다가
+// 결과가 "15위부터 시작하는 쪽"이라, 누른 사람에게는 순위표가 엉뚱한 데서
+// 시작한 것으로 보인다.
+//
+// 대신 1위부터 그 순위까지를 한 쪽에 담는다. 목록이 늘 1위에서 시작하니 어디에
+// 떨어졌는지 헷갈리지 않고, 그 책은 자기 자리에 있다(실측: 페이지 순서와 우리
+// 순위가 앞 79위까지 일치).
+//
+// per 을 100으로 고정하지 않는 이유는 렌더링 시간이다 — 실측 per=100 9.5초,
+// per=60 5.5초, per=40 3.7초. 그래서 20 단위로 필요한 만큼만 올린다.
+const KYOBO_PAGE_STEP = 20;
+
 function makeKyoboPageUrl(url, rank) {
   const pageUrl = new URL(url);
 
@@ -1332,18 +1333,13 @@ function makeKyoboPageUrl(url, rank) {
     return pageUrl.toString();
   }
 
-  if (rank < KYOBO_WINDOW_MIN_RANK) {
-    pageUrl.searchParams.set("page", "1");
-    pageUrl.searchParams.set("per", String(KYOBO_HEAD_PAGE_SIZE));
-    return pageUrl.toString();
-  }
+  const per = Math.min(
+    KYOBO_MAX_PAGE_SIZE,
+    Math.ceil(rank / KYOBO_PAGE_STEP) * KYOBO_PAGE_STEP
+  );
 
-  // page=2&per=P 는 P+1 위부터 시작한다. 목표보다 KYOBO_RANK_MARGIN 만큼
-  // 앞에서 시작하게 P 를 정하면, 그 책이 위에서 네 번째 줄에 놓인다.
-  const start = rank - KYOBO_RANK_MARGIN;
-
-  pageUrl.searchParams.set("page", "2");
-  pageUrl.searchParams.set("per", String(start - 1));
+  pageUrl.searchParams.set("page", "1");
+  pageUrl.searchParams.set("per", String(per));
   return pageUrl.toString();
 }
 
@@ -2570,6 +2566,9 @@ function buildFocusBooks(sections, catalog = []) {
       return {
         bookKey,
         title: book.title,
+        // 첫 화면 맨 앞에 고정한 도서인지. 화면이 "주요 도서" 표시를 붙일 때
+        // 쓴다 — 제목을 화면에서 다시 맞춰 보면 고정 목록이 두 곳에 생긴다.
+        pinned: focusPinRank(book.title) < FOCUS_PINNED_KEYS.length,
         // 제목 클릭은 교보 상품 페이지로 보낸다. 카탈로그 보강에서 찾은 링크가
         // 1순위, 없으면 교보 순위에서 얻은 링크, 그다음이 다른 서점이다.
         link:

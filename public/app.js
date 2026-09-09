@@ -1105,7 +1105,10 @@ function renderFocusBoardV2() {
                 : "진입 대기";
 
             return `
-              <article class="focus-card">
+              <article class="focus-card${book.pinned ? " is-pinned" : ""}">
+                ${book.pinned
+                  ? `<span class="focus-pin" title="첫 화면 맨 앞에 고정해 둔 도서입니다">주요 도서</span>`
+                  : ""}
                 <div class="focus-head">
                   <h3 class="focus-title">
                     ${titleHref

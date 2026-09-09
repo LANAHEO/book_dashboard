@@ -1828,6 +1828,34 @@ a {
   color: var(--ink);
 }
 
+/* "주요 도서" 표시. 카드 오른쪽 위 모서리에 걸쳐 둔다 — 제목·출간일 자리를
+   밀지 않으면서, 카드를 훑을 때 가장 먼저 눈에 걸리는 자리다.
+   카드가 position:relative 를 갖고 있어야 이 좌표가 카드 기준이 된다. */
+.focus-card {
+  position: relative;
+}
+
+.focus-pin {
+  position: absolute;
+  top: -9px;
+  right: 12px;
+  z-index: 1;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--primary);
+  color: #fff;
+  font-size: 10.5px;
+  font-weight: 950;
+  letter-spacing: -0.01em;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.16);
+}
+
+/* 고정 도서 카드는 테두리로도 한 번 더 갈라 준다. 표시만 붙이면 카드를 세로로
+   훑을 때 배지가 제목 뒤로 묻힌다. */
+.focus-card.is-pinned {
+  border-color: color-mix(in srgb, var(--primary) 45%, var(--line));
+}
+
 /* 제목과 출간일이 한 덩어리다. min-height는 제목 두 줄과 출간일 한 줄 자리를
    미리 잡아 두는 값이다 — 없으면 제목 길이에 따라 아래 네모 줄이 카드마다
    다른 높이에서 시작해 그리드가 계단처럼 어긋난다. 예전에는 이 값이
