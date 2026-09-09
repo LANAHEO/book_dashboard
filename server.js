@@ -67,7 +67,7 @@ const DASHBOARD_SNAPSHOT_ID = "latest";
 // 있다(.github/workflows/collect.yml 의 INTERVAL). 예전에는 배지가 캐시 수명을
 // 수집 주기인 양 "실시간 60분"이라고 적었다 — 10분마다 부르고 있는데도.
 // 두 파일에 나뉘어 있으니 collect.yml 을 고치면 여기도 같이 고쳐야 한다.
-const COLLECT_INTERVAL_MINUTES = 10;
+const COLLECT_INTERVAL_MINUTES = 5;
 
 // 서점 실시간은 약 1시간, 일·주간은 더 느리게 바뀌므로 캐시 수명을 맞춤.
 // 수집 트리거는 이 값과 무관하게 loadSource(force) 로 강제 갱신한다.

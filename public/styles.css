@@ -2673,6 +2673,31 @@ a.focus-chip:hover {
   font-weight: 500;
 }
 
+/* 서점 기준과 우리 수집의 차이. 목표(5분)를 넘었는지가 한눈에 보여야 해서
+   숫자에 색을 준다 — 표 안의 다른 숫자와 헷갈리지 않게 오른쪽 정렬한다. */
+.cs-lag {
+  width: 3.4em;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.cs-lag-value {
+  font-weight: 800;
+}
+
+.cs-lag-value.is-ok {
+  color: var(--primary);
+}
+
+.cs-lag-value.is-over {
+  color: var(--danger);
+}
+
+.cs-lag-na {
+  color: var(--stone);
+}
+
 .cs-flag {
   display: inline-block;
   margin-left: 5px;

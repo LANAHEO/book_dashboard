@@ -893,6 +893,49 @@ function renderDroppedOut(book) {
 
 // 서점이 밝히는 집계 기준. 우리가 수집한 시각과 다르므로 따로 보여 준다 —
 // 실시간 목록도 서점 쪽 기준이 한 시간 전일 수 있다.
+// 서점이 밝힌 집계 기준과 우리가 가져온 시각의 차이. 목표는 5분 이내다.
+//
+// 분 단위로 견줄 수 있는 것은 시각까지 적어 주는 기준뿐이다("2026.09.09 17:00").
+// 주간·일간은 기준이 주·날짜 단위라 분으로 잴 것이 없고, 알라딘은 기준 자체를
+// 밝히지 않는다. 잴 수 없는 것을 0분이라고 적으면 그게 제일 나쁜 거짓말이므로
+// 그런 칸은 왜 못 재는지를 적는다.
+const COLLECT_LAG_LIMIT_MINUTES = 5;
+
+function parseStoreStamp(stamp) {
+  const m = String(stamp || "").match(/(20\d{2})\.(\d{2})\.(\d{2})\s+(\d{1,2}):(\d{2})/);
+
+  if (!m) {
+    return null;
+  }
+
+  // 서점 표기는 한국 시간이다. UTC 로 옮겨서 우리 수집 시각과 같은 축에 둔다.
+  return Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4] - 9, +m[5]);
+}
+
+function renderCollectLag(group) {
+  const storeAt = parseStoreStamp(group.sourceStamp);
+
+  if (storeAt === null) {
+    return `<span class="cs-lag-na" title="이 순위의 집계 기준은 시각까지 적혀 있지 않아 분 단위로 견줄 수 없습니다">–</span>`;
+  }
+
+  const ours = Date.parse(group.collectedAt || "");
+
+  if (!Number.isFinite(ours)) {
+    return `<span class="cs-lag-na">–</span>`;
+  }
+
+  const minutes = Math.round((ours - storeAt) / 60000);
+  const over = minutes > COLLECT_LAG_LIMIT_MINUTES;
+  const hint = over
+    ? `서점이 아직 이 시각 기준을 최신으로 내주고 있어 차이가 ${minutes}분입니다. 우리가 더 자주 가져와도 서점이 새 기준을 올리기 전에는 줄지 않습니다.`
+    : `서점 기준과 ${minutes}분 차이로 가져왔습니다.`;
+
+  return `<span class="cs-lag-value${over ? " is-over" : " is-ok"}" title="${escapeHtml(
+    hint
+  )}">${escapeHtml(minutes)}분</span>`;
+}
+
 function renderSourceBasis(list) {
   const stamp = list.sourceStamp || "";
   const cadence = list.cadence || "";
@@ -1668,6 +1711,7 @@ function renderStoreStatus() {
                 <span>${escapeHtml(collected || "-")}</span>
                 ${next ? `<span class="cs-next">다음 ${escapeHtml(next)}</span>` : ""}
               </td>
+              <td class="cs-lag">${renderCollectLag(group)}</td>
             </tr>
           `;
         })
@@ -1682,6 +1726,7 @@ function renderStoreStatus() {
                 <th scope="col">구분</th>
                 <th scope="col">서점이 밝힌 순위 기준</th>
                 <th scope="col">우리 수집</th>
+                <th scope="col">시차</th>
               </tr>
             </thead>
             <tbody>${rows}</tbody>
