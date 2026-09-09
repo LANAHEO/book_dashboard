@@ -1070,38 +1070,17 @@ function renderFocusBoardV2() {
           .map((book) => {
             const appearances = book.appearances || [];
             const plan = focusCardPlan(book);
-            const barBest = (key) => {
-              const bar = plan.bars.find((entry) => entry.row.key === key);
-              const ranked = bar ? bar.cells.map((cell) => cell.appearance).filter(Boolean) : [];
 
-              return ranked.length
-                ? ranked.reduce((acc, item) =>
-                    getRankValue(item.rank) < getRankValue(acc.rank) ? item : acc
-                  )
-                : null;
-            };
-
-            // 제목도 순위 페이지로 보낸다. 예전에는 교보 상품 페이지로 갔는데,
-            // 카드 안에서 칩·바는 순위로 가고 제목만 구매 페이지로 새는 꼴이라
-            // 같은 카드를 눌러도 어디로 갈지 알 수 없었다. 목적지는 우리가 정한
-            // 순위 우선순위를 따른다 — 주간종합 → 일간종합 → 주간분야 →
-            // 일간분야 → 종합 실시간. 화면에서 실시간이 맨 위에 있는 것과는
-            // 다른 이야기다. 위에 있는 이유는 지금 값이라서고, 이 순서는
-            // 어느 순위가 더 무거운지다.
-            const liveBest = bestAppearanceFor(
-              appearances,
-              (item) => item.group === "overall-realtime"
-            );
-            const titleTarget =
-              barBest("weekly-standard") ||
-              barBest("daily-standard") ||
-              barBest("weekly-category") ||
-              barBest("daily-category") ||
-              liveBest;
-            const titleHref = titleTarget ? rankHref(titleTarget) : book.link || "";
-            const titleHint = titleTarget
-              ? `${titleTarget.storeName} · ${titleTarget.listName} · ${titleTarget.rank}위 위치로 이동${rankTimingNote(titleTarget)}`
-              : `${book.title} 상세 페이지 열기`;
+            // 제목은 그 책 교보문고 상품 페이지로 보낸다. 한때 순위 페이지로
+            // 돌렸었는데(카드 안에서 목적지를 하나로 맞추려고), 제목을 누르는
+            // 사람이 찾는 것은 순위 안의 위치가 아니라 그 책이다. 순위로 가는
+            // 길은 숫자 칸과 바가 이미 전부 맡고 있다.
+            //
+            // book.link 는 서버가 이 클릭을 위해 만든 값이다 — 카탈로그에서 얻은
+            // 교보 링크가 1순위, 없으면 교보 순위에서 얻은 링크, 그다음이 다른
+            // 서점이다.
+            const titleHref = book.link || "";
+            const titleHint = `${book.title} 교보문고 상품 페이지 열기`;
 
             const droppedOut = renderDroppedOut(book);
             // 이번 수집에 없고 직전에는 있었다면 "진입 대기"가 아니라 이탈이다.
