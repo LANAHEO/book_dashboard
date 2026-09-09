@@ -551,6 +551,10 @@ function focusCardPlan(book) {
   const isCategoryRealtime = (item) =>
     item.group === "category" && appearancePeriod(item) === "realtime";
 
+  // 카드 전체가 따라갈 분야 하나. 이름 칸도, 분야 실시간 네모도, 분야 바 두
+  // 줄도 전부 이 키만 본다.
+  const categoryKey = focusCategoryKey(appearances);
+
   // 첫째 줄: 서점별 종합 실시간.
   const liveBoxes = FOCUS_STORE_COLUMNS.map((store) => ({
     store,
@@ -562,26 +566,40 @@ function focusCardPlan(book) {
   // 교보가 분야 실시간을 따로 내주지 않기 때문이다 — 그 자리에 이 책이 어느
   // 분야에서 겨루는지를 적어, 옆 두 칸의 숫자가 무슨 분야 순위인지 밝힌다.
   const categoryBoxes = [
-    { kind: "name", value: focusCategoryName(appearances) },
+    { kind: "name", value: focusCategoryName(appearances, categoryKey) },
     ...["yes24", "aladin"].map((storeId) => {
       const store = FOCUS_STORE_COLUMNS.find((entry) => entry.id === storeId);
 
       return {
         store,
         qualifier: "분야 실시간",
-        appearance: storeBest(storeId, isCategoryRealtime)
+        appearance: storeBest(
+          storeId,
+          (item) => isCategoryRealtime(item) && inCategoryKey(item, categoryKey)
+        )
       };
     })
   ];
+
+  // 한 칸에 들어갈 수 있는 목록이 둘 이상이면 순위가 좋은 쪽이 이겼다. 그래서
+  // 교보 "주간종합순위"는 종합 주간 33위와 온라인 주간 38위 중 33위만 보여
+  // 줬고, 온라인 주간을 연 사람에게는 틀린 값이었다. 서버가 그 자리의 주인을
+  // primary 로 찍어 주므로, 주인이 있으면 순위와 무관하게 그쪽을 쓴다.
+  const rowMatch = (row, item) => {
+    if (appearancePeriod(item) !== row.period || item.group !== row.group) {
+      return false;
+    }
+
+    return row.group === "category" ? inCategoryKey(item, categoryKey) : true;
+  };
 
   const bars = FOCUS_BAR_ROWS.map((row) => ({
     row,
     cells: FOCUS_STORE_COLUMNS.map((store) => ({
       store,
-      appearance: storeBest(
-        store.id,
-        (item) => item.group === row.group && appearancePeriod(item) === row.period
-      )
+      appearance:
+        storeBest(store.id, (item) => rowMatch(row, item) && item.primary) ||
+        storeBest(store.id, (item) => rowMatch(row, item))
     }))
   }));
 
@@ -596,11 +614,44 @@ function focusCardPlan(book) {
   return { liveBoxes, categoryBoxes, bars, drawn: [...drawn] };
 }
 
-// 분야명은 서점마다 다르게 적는다(경제/경영, 경제 경영, 경제경영). 하나만
-// 골라야 하므로 칸 순서와 같은 우선순위로 교보 → 예스 → 알라딘에서 찾는다.
-function focusCategoryName(appearances) {
+// 한 책은 여러 분야에 동시에 오른다. 카드는 그중 하나를 골라 이름을 적고,
+// 아래 분야 줄 두 개도 반드시 그 하나를 따라야 한다. 예전에는 이름만 골라 놓고
+// 순위는 분야를 가리지 않고 제일 좋은 것을 집어 왔다 — "AI, 신의 탄생 인간의
+// 종말" 카드는 분야를 "경제/경영"이라 적고 알라딘 칸에 컴퓨터/모바일 14위를
+// 보여 줬다. 알라딘 경제경영 주간에서 그 책은 47위다. 서점과 나란히 놓고 보면
+// 그냥 틀린 숫자다. 그래서 여기서 분야 묶음 하나를 정하고, 그 뒤로는 전부
+// 그 묶음만 본다.
+function focusCategoryKey(appearances) {
   const categories = sortAppearances(
-    appearances.filter((item) => item.group === "category" && item.categoryName)
+    appearances.filter(
+      (item) =>
+        item.group === "category" && (item.categoryGroupKeys || []).length > 0
+    )
+  );
+
+  for (const store of FOCUS_STORE_COLUMNS) {
+    const match = categories.find((item) => item.storeId === store.id);
+
+    if (match) {
+      return match.categoryGroupKeys[0];
+    }
+  }
+
+  return "";
+}
+
+function inCategoryKey(item, key) {
+  return Boolean(key) && (item.categoryGroupKeys || []).includes(key);
+}
+
+// 분야명은 서점마다 다르게 적는다(경제/경영, 경제 경영, 경제경영). 카드에는
+// 칸 순서와 같은 우선순위로 교보 → 예스 → 알라딘 중 먼저 있는 이름을 적는다.
+function focusCategoryName(appearances, key) {
+  const categories = sortAppearances(
+    appearances.filter(
+      (item) =>
+        item.group === "category" && item.categoryName && inCategoryKey(item, key)
+    )
   );
 
   for (const store of FOCUS_STORE_COLUMNS) {

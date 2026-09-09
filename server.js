@@ -468,6 +468,12 @@ const SOURCES = [
     typeLabel: "주간",
     period: "weekly",
     group: "standard",
+    // 교보만 같은 기간에 종합 목록이 둘이다(이것과 "온라인 베스트 주간").
+    // 카드의 "주간종합순위" 칸은 둘 중 하나만 보여줄 수 있는데, 예전에는
+    // 순위가 더 좋은 쪽을 말없이 골랐다 — 33위(종합)와 38위(온라인) 중 33위만
+    // 나오니, 온라인 주간을 열어 본 사람에게는 틀린 숫자였다. 줄 이름이
+    // "종합"이므로 종합 쪽이 그 자리의 주인이다.
+    primary: true,
     realtime: false,
     ttlMs: STANDARD_REFRESH_MS,
     sourceUrl: "https://store.kyobobook.co.kr/bestseller/total/weekly",
@@ -2401,6 +2407,8 @@ function buildPayload(definition, result, options = {}) {
     categoryName: definition.categoryName || "",
     // 서점끼리 같은 분야를 짝지어 나란히 보여 주려면 화면도 이 키를 알아야 한다.
     groupKeys: definition.groupKeys || [],
+    // 같은 (서점·기간) 자리에 목록이 둘 이상일 때 어느 쪽이 그 자리의 주인인지.
+    primary: definition.primary === true,
     period: definition.period || "",
     periodLabel: definition.period ? PERIOD_LABELS[definition.period] : "",
     realtime: definition.realtime,
@@ -2467,6 +2475,14 @@ function buildFocusBooks(sections, catalog = []) {
             listUrl: item.listUrl || "",
             group: list.group || "",
             categoryName: list.categoryName || "",
+            // 한 책은 여러 분야에 동시에 오른다("AI, 신의 탄생 인간의 종말"은
+            // 컴퓨터/모바일·과학·경제경영 셋). 카드가 그중 어느 분야를 말하는
+            // 중인지 가리려면 화면도 분야 묶음 키를 알아야 한다. 없을 때는
+            // 카드가 순위가 제일 좋은 분야를 집어 와서, 카드에 적힌 분야 이름과
+            // 다른 분야의 순위를 나란히 보여 줬다.
+            categoryGroupKeys: list.groupKeys || [],
+            // 같은 자리에 목록이 둘일 때(교보 종합 주간 vs 온라인 주간) 주인 표시.
+            primary: list.primary === true,
             // 카드의 칩 순서를 주간→일간→분야별→실시간으로 세우려면 화면도
             // 이 목록이 어느 기간인지 알아야 한다. 목록 이름만으로는 갈리지
             // 않는다 — 예스24 일간은 이름이 "일별 베스트셀러"다.
