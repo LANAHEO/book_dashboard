@@ -2862,17 +2862,18 @@ a.focus-live-box:focus-visible {
   color: var(--muted);
 }
 
-/* 순위 칸에는 색을 칠하지 않는다. 카드 하나에 네 줄 × 세 칸이라 서점색을
-   얹으면 카드가 색 밭이 되고 숫자가 뒤로 밀린다. 어느 칸이 어느 서점인지는
-   위 네모 줄의 이름표(교보·예스·알라딘)가 열 머리 노릇을 한다.
-   누를 수 있다는 신호는 색 대신 테두리로만 준다. */
+/* 칸을 색으로 채우지는 않는다 — 카드 하나에 네 줄 × 세 칸이라 배경을 칠하면
+   카드가 색 밭이 되고 숫자가 뒤로 밀렸다. 대신 숫자 자체에 그 서점 색을
+   입힌다. 위 네모의 서점 이름과 같은 계산식(78% 섞기)을 쓰므로 둘이 같은
+   서점을 가리키는 것으로 읽히고, 작은 글씨라도 잉크를 섞어 두면 읽힌다. */
 .focus-bar-cell:not(.is-empty) {
   border: 1px solid transparent;
+  color: color-mix(in srgb, var(--store-accent, var(--ink)) 78%, var(--ink));
 }
 
 a.focus-bar-cell:hover,
 a.focus-bar-cell:focus-visible {
-  border-color: var(--line);
+  border-color: color-mix(in srgb, var(--store-accent, var(--ink)) 40%, var(--line));
   outline: none;
 }
 

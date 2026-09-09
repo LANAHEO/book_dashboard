@@ -825,9 +825,14 @@ function renderFocusBarCell(store, appearance) {
   const href = rankHref(appearance);
   const hint = `${source} ${appearance.rank}위 위치로 이동${deltaHint(appearance)}${rankTimingNote(appearance)}`;
 
+  // 칸을 색으로 채우지는 않지만, 어느 서점 순위인지는 칸마다 밝혀야 한다.
+  // 그래서 배경 대신 숫자 자체에 그 서점 색을 입힌다 — 위 네모의 서점 이름과
+  // 같은 색이므로 둘이 같은 서점을 가리키는 것으로 읽힌다.
+  const accent = storeAccentStyle(store.id);
+
   return href
-    ? `<a class="focus-bar-cell" href="${escapeHtml(href)}" target="_blank" rel="noreferrer" title="${escapeHtml(hint)}">${body}</a>`
-    : `<span class="focus-bar-cell" title="${escapeHtml(source)}">${body}</span>`;
+    ? `<a class="focus-bar-cell"${accent} href="${escapeHtml(href)}" target="_blank" rel="noreferrer" title="${escapeHtml(hint)}">${body}</a>`
+    : `<span class="focus-bar-cell"${accent} title="${escapeHtml(source)}">${body}</span>`;
 }
 
 // 네 줄에는 색을 칠하지 않는다. 예전에는 줄 배경에 최고 순위만큼 길이가 차는
