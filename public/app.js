@@ -1938,6 +1938,13 @@ async function loadDashboard(refresh = "") {
   }
 }
 
+// 화면을 열어 둔 동안에도 값이 따라가야 한다. 예전에는 목록의 nextRefreshAt
+// (수집 시각 + 캐시 수명)에서 가장 이른 것을 기다렸는데, 실시간 캐시 수명이
+// 60분이라 화면은 한 시간에 한 번만 다시 받았다. 수집은 5분마다 하고 있었으니
+// 화면 숫자가 최대 한 시간 뒤처졌고, 그 숫자를 누르면 서점은 그동안 바뀐 지금
+// 순위를 보여 줬다 — "클릭하면 다르게 나온다"의 원인이 이것이다.
+//
+// 그래서 캐시 수명이 아니라 실제 수집 주기를 따른다.
 function scheduleDashboardRefresh() {
   if (state.refreshTimer) {
     clearTimeout(state.refreshTimer);
@@ -1948,22 +1955,34 @@ function scheduleDashboardRefresh() {
     return;
   }
 
-  const refreshableLists = state.dashboard.sections
-    .flatMap((section) => section.lists)
-    .filter((list) => list.nextRefreshAt);
-
-  if (!refreshableLists.length) {
-    return;
-  }
-
-  const nextTime = Math.min(
-    ...refreshableLists.map((list) => new Date(list.nextRefreshAt).getTime())
-  );
-  const delay = Math.max(nextTime - Date.now(), 30_000);
+  const delay = Math.max(collectIntervalMs(), 60_000);
 
   state.refreshTimer = window.setTimeout(() => {
     loadDashboard();
   }, delay);
+}
+
+function collectIntervalMs() {
+  const intervals = (state.dashboard && state.dashboard.collectIntervals) || {};
+
+  return (Number(intervals.realtimeMinutes) || 5) * 60_000;
+}
+
+// 탭을 다른 데 두고 있으면 브라우저가 타이머를 늦추거나 멈춘다. 돌아왔을 때
+// 화면이 묵었으면 기다리지 않고 바로 받는다 — 열어 둔 채 한참 뒤에 순위를
+// 누르는 경우가 실제로 어긋남을 만들던 자리다.
+function watchTabReturn() {
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState !== "visible" || !state.dashboard) {
+      return;
+    }
+
+    const age = Date.now() - Date.parse(state.dashboard.generatedAt || "");
+
+    if (!Number.isFinite(age) || age >= collectIntervalMs()) {
+      loadDashboard();
+    }
+  });
 }
 
 function bindEvents() {
@@ -2047,6 +2066,7 @@ function removeAddressHash() {
 
 removeAddressHash();
 window.addEventListener("hashchange", removeAddressHash);
+watchTabReturn();
 bindEvents();
 showIdleBadge();
 // 서버가 첫 화면 데이터를 HTML에 실어 보낸다(window.__BOOTSTRAP__).
