@@ -640,8 +640,16 @@ function focusCategoryKey(appearances) {
   return "";
 }
 
+// 키를 못 정한 경우(= 저장된 스냅샷이 categoryGroupKeys 를 아직 안 담고 있는
+// 옛 수집분)에는 거르지 않고 통과시킨다. 여기서 막아 버리면 배포 직후 다음
+// 수집이 돌기 전까지 분야 줄이 통째로 "100위 밖"이 된다 — 틀린 분야를 보여
+// 주는 것보다 나쁘다.
 function inCategoryKey(item, key) {
-  return Boolean(key) && (item.categoryGroupKeys || []).includes(key);
+  if (!key) {
+    return true;
+  }
+
+  return (item.categoryGroupKeys || []).includes(key);
 }
 
 // 분야명은 서점마다 다르게 적는다(경제/경영, 경제 경영, 경제경영). 카드에는
