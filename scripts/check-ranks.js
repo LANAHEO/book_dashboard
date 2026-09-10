@@ -248,7 +248,9 @@ async function storeRanks(list, options = {}) {
   console.log(`우리 데이터가 얼마나 묵었나 (갱신 예정 시각 + 유예 ${grace}분을 넘기면 멈춘 것으로 본다)`);
   for (const store of payload.storeStatus || []) {
     for (const group of store.groups || []) {
-      const ours = Date.parse(group.collectedAt || "");
+      // collectedAt 은 값이 바뀐 시각이라 순위가 조용하면 움직이지 않는다.
+      // "수집이 돌고 있나"를 보려면 마지막으로 서점을 열어 본 시각을 봐야 한다.
+      const ours = Date.parse(group.checkedAt || group.collectedAt || "");
       if (!Number.isFinite(ours)) continue;
 
       const age = Math.round((Date.now() - ours) / 60000);

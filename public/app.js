@@ -963,26 +963,17 @@ function renderCollectLag(group) {
     return `<span class="cs-lag-na">–</span>`;
   }
 
-  const due = Math.floor(ours / HOUR_MS) * HOUR_MS;
-  const ourLag = Math.max(0, Math.round((ours - due) / 60000));
-  const storeLag = Math.max(0, Math.round((due - storeAt) / 60000));
-  const over = ourLag > COLLECT_LAG_LIMIT_MINUTES;
-
-  const hint = [
-    `우리는 정각으로부터 ${ourLag}분 뒤에 가져왔습니다.`,
-    storeLag > 0
-      ? `이 서점은 ${storeLag}분 지난 기준(${group.sourceStamp})을 아직 최신으로 내주고 있습니다 — 우리가 더 자주 가져와도 줄지 않는 차이입니다.`
-      : "서점이 이 시간대 기준을 이미 올린 뒤에 가져왔습니다."
-  ].join(" ");
-
-  const store =
-    storeLag > 0
-      ? `<span class="cs-lag-store">서점 표기 ${escapeHtml(storeLag)}분 늦음</span>`
-      : "";
+  // 서점이 이 기준을 올린 뒤 우리가 그것을 집어 오기까지 걸린 시간.
+  // updatedAt 은 값이 바뀌었을 때만 움직이므로, 같은 값을 다시 긁어도 늘지 않는다.
+  const minutes = Math.max(0, Math.round((ours - storeAt) / 60000));
+  const over = minutes > COLLECT_LAG_LIMIT_MINUTES;
+  const hint = over
+    ? `서점이 ${group.sourceStamp} 기준을 올린 뒤 ${minutes}분 만에 가져왔습니다.`
+    : `서점이 ${group.sourceStamp} 기준을 올린 직후(${minutes}분)에 가져왔습니다.`;
 
   return `<span class="cs-lag-value${over ? " is-over" : " is-ok"}" title="${escapeHtml(
     hint
-  )}">${escapeHtml(ourLag)}분</span>${store}`;
+  )}">${escapeHtml(minutes)}분</span>`;
 }
 
 function renderSourceBasis(list) {
@@ -1665,7 +1656,9 @@ function renderStoreStatus() {
             ? `<span class="cs-cadence">${escapeHtml(group.cadence)}</span>`
             : "";
           const collected = formatClock(group.collectedAt);
-          const next = formatClock(group.nextRefreshAt);
+          // 예정 시각보다 "마지막으로 서점을 열어 본 시각"이 쓸모 있다. 값이 그대로면
+          // 위의 수집 시각은 움직이지 않으므로, 수집이 돌고 있다는 것은 이 줄이 말해 준다.
+          const checked = formatClock(group.checkedAt);
           const flag = group.error
             ? '<span class="cs-flag cs-flag-error">수집 실패</span>'
             : group.stale
@@ -1678,7 +1671,7 @@ function renderStoreStatus() {
               <td class="cs-basis-cell">${basis}${cadence}</td>
               <td class="cs-collected">
                 <span>${escapeHtml(collected || "-")}</span>
-                ${next ? `<span class="cs-next">다음 ${escapeHtml(next)}</span>` : ""}
+                ${checked ? `<span class="cs-next">마지막 확인 ${escapeHtml(checked)}</span>` : ""}
               </td>
               <td class="cs-lag">${renderCollectLag(group)}</td>
             </tr>

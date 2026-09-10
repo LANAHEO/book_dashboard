@@ -2495,9 +2495,35 @@ function attachListUrls(definition, items) {
   }));
 }
 
+// 순위가 그대로면 "우리 수집" 시각도 그대로 둔다.
+//
+// 전수 수집이 한 번 더 긁었다는 이유로 시각이 지금으로 당겨지면, 화면은 방금 바뀐
+// 값이라고 말하고 "우리 지연"도 그만큼 부풀어 오른다 — 교보가 10:00 기준을 내주는
+// 동안 10:54 에 다시 긁었더니 54분 늦은 것으로 빨갛게 찍혔다. 늦은 게 아니라
+// 서점이 새로 올린 것이 없었을 뿐이다.
+//
+// 그래서 updatedAt 은 "이 값이 우리 것이 된 시각", checkedAt 은 "마지막으로 서점을
+// 열어 확인한 시각"으로 나눈다. 앞의 값이 서점 기준과 견줄 수 있는 값이고, 뒤의
+// 값이 수집이 돌고 있음을 보여 준다.
+function sameRanking(previous, draft) {
+  if (!previous) {
+    return false;
+  }
+
+  const before = rankingFingerprint(previous);
+
+  return Boolean(before) && before === rankingFingerprint(draft);
+}
+
 function buildPayload(definition, result, options = {}) {
   const now = new Date();
   const items = attachListUrls(definition, result.items);
+  const previous = options.previous || null;
+  const unchanged = sameRanking(previous, {
+    sourceStamp: result.sourceStamp || "",
+    items
+  });
+  const collectedAt = (unchanged && previous.updatedAt) || now.toISOString();
 
   return {
     id: definition.id,
@@ -2517,7 +2543,8 @@ function buildPayload(definition, result, options = {}) {
     derived: definition.derived === true,
     note: definition.note || "",
     sourceUrl: definition.sourceUrl,
-    updatedAt: now.toISOString(),
+    updatedAt: collectedAt,
+    checkedAt: now.toISOString(),
     nextRefreshAt: new Date(nextRefreshFor(definition, now.getTime())).toISOString(),
     sourceStamp: result.sourceStamp || "",
     cadence: getStoreCadence(definition.storeId, definition.period, definition.realtime),
@@ -2725,7 +2752,14 @@ async function loadSource(id, options = {}) {
 
   try {
     const result = await definition.load();
-    const payload = buildPayload(definition, result);
+    // 직전 값을 알아야 "이 값이 우리 것이 된 시각"을 이어 갈 수 있다. 서버리스는
+    // 호출마다 메모리가 비므로, 메모리에 없으면 저장소에서 한 번 읽는다.
+    const previous = cached
+      ? cached.payload
+      : await readPersistedSource(id)
+          .then((entry) => (entry ? entry.payload : null))
+          .catch(() => null);
+    const payload = buildPayload(definition, result, { previous });
     cache.set(id, {
       payload,
       expiresAt: now + definition.ttlMs
@@ -2795,6 +2829,7 @@ function buildStoreStatus(sections) {
         key,
         label: PERIOD_LABELS[key] || list.typeLabel || key,
         collectedAt: list.updatedAt || "",
+        checkedAt: list.checkedAt || "",
         nextRefreshAt: list.nextRefreshAt || "",
         sourceStamp: list.sourceStamp || "",
         cadence: list.cadence || "",
