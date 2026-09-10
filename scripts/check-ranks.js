@@ -19,6 +19,8 @@
 // 종료 코드:
 //   0  고정 목록이 서점과 일치하고, 데이터도 제 주기 안이다
 //   1  고정 목록이 서점과 어긋난다 — 버그다. 수집을 멈춰야 한다
+//      (한 번 어긋난 것만으로는 판정하지 않는다. 페이지를 새로 받아 두 번 다
+//       어긋나야 1이다 — 서점이 한 번 이상한 쪽을 내주는 일이 실제로 있었다)
 //   2  검사 자체가 실패했다 (네트워크·파싱)
 //   3  값은 맞지만 데이터가 묵었다 — 경고다. 수집을 멈추면 안 된다
 //
@@ -90,10 +92,21 @@ function ranksOnPage(storeId, html) {
   return out;
 }
 
+// 서점 페이지에서 그 책을 찾아 우리 값과 맞춰 본다. 맞으면 빈 문자열,
+// 어긋나면 어떻게 어긋났는지를 돌려준다.
+function compare(onPage, item) {
+  const hit = onPage.find((x) => norm(x.title) === norm(item.title));
+
+  if (!hit) return `화면 ${item.rank}위인데 서점 페이지에 없음`;
+  if (hit.rank === Number(item.rank)) return "";
+
+  return `화면 ${item.rank}위 / 서점 ${hit.rank}위`;
+}
+
 const pageCache = new Map();
 
-async function storeRanks(list) {
-  if (pageCache.has(list.id)) return pageCache.get(list.id);
+async function storeRanks(list, options = {}) {
+  if (!options.fresh && pageCache.has(list.id)) return pageCache.get(list.id);
 
   const items = [];
   // 알라딘 50/쪽, 예스24 24/쪽. 100위까지 덮으려면 그만큼 넘긴다.
@@ -135,6 +148,10 @@ async function storeRanks(list) {
 
   const fixedProblems = [];
   const realtimeDrift = [];
+  // 고정 목록이 어긋난 건. 서점 페이지를 새로 받아 한 번 더 확인한 뒤에 판정한다.
+  const suspects = [];
+  // 같은 목록을 의심 건마다 다시 받지 않는다 — 서점을 두들기지 않기 위해서다.
+  const refetched = new Set();
   let fixedOk = 0;
   let skipped = 0;
 
@@ -152,26 +169,55 @@ async function storeRanks(list) {
         continue;
       }
 
-      const hit = onPage.find((x) => norm(x.title) === norm(item.title));
+      const verdict = compare(onPage, item);
       const where = `${book.title} · ${item.storeName} · ${item.listName}`;
 
-      if (!hit) {
-        // 그 페이지에 아예 없다. 실시간이면 우리 수집 뒤에 밀려난 것일 수 있다.
-        const note = `${where} → 화면 ${item.rank}위인데 서점 페이지에 없음`;
-        if (item.realtime) realtimeDrift.push(note);
-        else fixedProblems.push(note);
-        continue;
-      }
-
-      if (hit.rank === Number(item.rank)) {
+      if (!verdict) {
         if (!item.realtime) fixedOk++;
         continue;
       }
 
-      const note = `${where} → 화면 ${item.rank}위 / 서점 ${hit.rank}위`;
-      if (item.realtime) realtimeDrift.push(note);
-      else fixedProblems.push(note);
+      if (item.realtime) {
+        realtimeDrift.push(`${where} → ${verdict}`);
+        continue;
+      }
+
+      // 고정 목록이 어긋났다. 여기서 바로 "버그"라고 부르지 않는다 — 서점이
+      // 한 번 이상한 쪽을 내주는 일이 실제로 있었고(알라딘 경제경영 주간),
+      // 그 한 번으로 수집 루프가 exit 1 로 죽어 몇 시간이 비었다. 우리 값은
+      // 맞았고 서점 응답이 일시적이었다. 그래서 의심만 적어 두고, 아래에서
+      // 페이지를 새로 받아 한 번 더 확인한 뒤에 판정한다.
+      suspects.push({ where, item, list });
     }
+  }
+
+  // ── 의심 건 재확인 ──────────────────────────────────────────────────
+  // 캐시를 버리고 서점 페이지를 새로 받는다. 두 번 다 어긋나야 버그다.
+  if (suspects.length) {
+    console.log(`\n어긋난 ${suspects.length}건 재확인 — 서점 페이지를 새로 받는다`);
+  }
+
+  for (const s of suspects) {
+    const fresh = !refetched.has(s.list.id);
+    refetched.add(s.list.id);
+    const onPage = await storeRanks(s.list, { fresh });
+
+    if (!onPage.length) {
+      // 두 번째에는 페이지를 못 읽었다. 우리 값이 틀렸다는 근거가 못 된다.
+      console.log(`  ? ${s.where} — 재확인 때 서점 페이지를 못 읽어 판정 보류`);
+      skipped++;
+      continue;
+    }
+
+    const verdict = compare(onPage, s.item);
+
+    if (!verdict) {
+      console.log(`  ~ ${s.where} — 처음엔 어긋났으나 재확인에서 일치 (서점 일시 응답)`);
+      fixedOk++;
+      continue;
+    }
+
+    fixedProblems.push(`${s.where} → ${verdict}`);
   }
 
   // ── 우리 데이터가 얼마나 묵었나 ─────────────────────────────────────

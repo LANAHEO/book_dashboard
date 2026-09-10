@@ -78,6 +78,25 @@ const REQUEST_TIMEOUT_MS = 15_000;
 // 오늘·이번 달은 아직 집계가 끝나지 않았으니 STANDARD_REFRESH_MS를 쓴다.
 const HISTORY_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
+// 서점 실시간 순위는 매시 정각에 새 기준으로 갈린다. 그런데 캐시 수명을 "지금부터
+// 60분"으로 재면 만료 시각이 처음 가져온 분에 눌러앉는다 — 10:28 에 한 번 가져오면
+// 그 뒤로 11:28, 12:28 … 이 되어 매시간 28분씩 늦은 값을 들고 있게 된다. 실제로
+// 화면의 "다음 갱신"이 :28 에 고정돼 있었고, 그게 서점 기준과 어긋나 보이는
+// 이유였다. 그래서 실시간은 "지금부터 한 시간"이 아니라 "다음 정각"에 만료시킨다.
+// 수집 루프가 매시 :01 에 들여다보므로(collect.yml 의 OFFSET), 정각에 갈린 순위를
+// 1분 안에 잡는다.
+//
+// 주간·일간·월간은 정각과 무관하게 하루 단위로 움직이므로 종전대로 굴린다.
+const HOUR_MS = 60 * 60 * 1000;
+
+function expiryFor(definition, nowMs) {
+  if (!definition.realtime) {
+    return nowMs + definition.ttlMs;
+  }
+
+  return Math.floor(nowMs / HOUR_MS) * HOUR_MS + HOUR_MS;
+}
+
 const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
   "(KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36";
@@ -2498,7 +2517,7 @@ function buildPayload(definition, result, options = {}) {
     note: definition.note || "",
     sourceUrl: definition.sourceUrl,
     updatedAt: now.toISOString(),
-    nextRefreshAt: new Date(now.getTime() + definition.ttlMs).toISOString(),
+    nextRefreshAt: new Date(expiryFor(definition, now.getTime())).toISOString(),
     sourceStamp: result.sourceStamp || "",
     cadence: getStoreCadence(definition.storeId, definition.period, definition.realtime),
     itemCount: items.length,
@@ -2706,11 +2725,12 @@ async function loadSource(id, options = {}) {
   try {
     const result = await definition.load();
     const payload = buildPayload(definition, result);
+    const expiresAt = expiryFor(definition, now);
     cache.set(id, {
       payload,
-      expiresAt: now + definition.ttlMs
+      expiresAt
     });
-    await writePersistedSource(id, payload, now + definition.ttlMs);
+    await writePersistedSource(id, payload, expiresAt);
     return {
       ...payload,
       cacheState: force ? "refreshed" : "miss"
