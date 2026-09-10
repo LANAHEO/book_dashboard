@@ -1716,14 +1716,6 @@ function renderStoreStatus() {
         <span class="cs-summary-title">데이터 수집 시점</span>
         <span class="cs-summary-hint">서점 3곳 기준 보기</span>
       </summary>
-      <p class="cs-lede">
-        <strong>서점이 밝힌 순위 기준</strong>은 서점이 그 순위를 언제 기준으로 집계했는지,
-        <strong>우리 수집</strong>은 우리가 그것을 언제 가져왔는지입니다.
-        실시간 순위는 매시 정각에 갈리므로 우리도 <strong>매시 정각 직후에 가져옵니다</strong>.
-        <strong>우리 지연</strong>은 정각으로부터 몇 분 뒤에 가져왔는지입니다.
-        서점이 지난 시간 기준을 아직 최신으로 내주고 있으면 그 사실은 따로 적습니다 —
-        그건 우리가 더 자주 가져와도 줄지 않는 차이입니다.
-      </p>
       ${renderSwipeSwitcher(stores, "수집 시점 서점 넘겨 보기")}
       <div class="cs-grid">${cards}</div>
     </details>

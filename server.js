@@ -78,18 +78,19 @@ const REQUEST_TIMEOUT_MS = 15_000;
 // 오늘·이번 달은 아직 집계가 끝나지 않았으니 STANDARD_REFRESH_MS를 쓴다.
 const HISTORY_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
-// 서점 실시간 순위는 매시 정각에 새 기준으로 갈린다. 그런데 캐시 수명을 "지금부터
-// 60분"으로 재면 만료 시각이 처음 가져온 분에 눌러앉는다 — 10:28 에 한 번 가져오면
-// 그 뒤로 11:28, 12:28 … 이 되어 매시간 28분씩 늦은 값을 들고 있게 된다. 실제로
-// 화면의 "다음 갱신"이 :28 에 고정돼 있었고, 그게 서점 기준과 어긋나 보이는
-// 이유였다. 그래서 실시간은 "지금부터 한 시간"이 아니라 "다음 정각"에 만료시킨다.
-// 수집 루프가 매시 :01 에 들여다보므로(collect.yml 의 OFFSET), 정각에 갈린 순위를
-// 1분 안에 잡는다.
-//
-// 주간·일간·월간은 정각과 무관하게 하루 단위로 움직이므로 종전대로 굴린다.
 const HOUR_MS = 60 * 60 * 1000;
 
-function expiryFor(definition, nowMs) {
+// 화면에 적는 "다음 갱신 예정". 캐시 수명과는 다른 값이라 따로 센다.
+//
+// 예전에는 이 자리에 "지금부터 60분"을 적었다. 그러면 10:28 에 한 번 가져온 뒤로
+// 11:28, 12:28 … 이 되어 :28 에 눌러앉는데, 서점은 매시 정각에 기준을 갈아 끼우므로
+// 화면이 서점과 어긋나 보였다. 실시간은 다음 정각이 맞다.
+//
+// 캐시 수명에까지 이 값을 쓰면 안 된다. 정각이 지나는 순간 세 서점의 실시간 목록이
+// 한꺼번에 만료되고, 스냅샷을 다시 만들 때 순위가 바뀌지 않은 서점까지 다시 긁어
+// 수집 시각이 지금으로 당겨진다 — 그러면 "이 값이 언제 바뀐 것인지"를 잃는다.
+// 실제 갱신은 서점별로 순위가 바뀐 것을 확인했을 때만 한다(probeRealtimeSources).
+function nextRefreshFor(definition, nowMs) {
   if (!definition.realtime) {
     return nowMs + definition.ttlMs;
   }
@@ -2517,7 +2518,7 @@ function buildPayload(definition, result, options = {}) {
     note: definition.note || "",
     sourceUrl: definition.sourceUrl,
     updatedAt: now.toISOString(),
-    nextRefreshAt: new Date(expiryFor(definition, now.getTime())).toISOString(),
+    nextRefreshAt: new Date(nextRefreshFor(definition, now.getTime())).toISOString(),
     sourceStamp: result.sourceStamp || "",
     cadence: getStoreCadence(definition.storeId, definition.period, definition.realtime),
     itemCount: items.length,
@@ -2725,12 +2726,11 @@ async function loadSource(id, options = {}) {
   try {
     const result = await definition.load();
     const payload = buildPayload(definition, result);
-    const expiresAt = expiryFor(definition, now);
     cache.set(id, {
       payload,
-      expiresAt
+      expiresAt: now + definition.ttlMs
     });
-    await writePersistedSource(id, payload, expiresAt);
+    await writePersistedSource(id, payload, now + definition.ttlMs);
     return {
       ...payload,
       cacheState: force ? "refreshed" : "miss"
@@ -3390,9 +3390,15 @@ async function serveStatic(response, requestPath) {
   }
 }
 
-async function refreshRealtimeSources(skipIds = new Set()) {
+// storeIds 를 주면 그 서점의 실시간 목록만 다시 가져온다. 서점마다 순위를 갈아
+// 끼우는 시각이 다르므로, 한 곳이 바뀌었다고 세 곳을 모두 긁으면 안 바뀐 서점의
+// 수집 시각까지 지금으로 당겨져 "언제 바뀐 값인지"가 사라진다.
+async function refreshRealtimeSources(skipIds = new Set(), storeIds = null) {
   const realtimeIds = SOURCES.filter(
-    (source) => source.realtime && !skipIds.has(source.id)
+    (source) =>
+      source.realtime &&
+      !skipIds.has(source.id) &&
+      (!storeIds || storeIds.has(source.storeId))
   ).map((source) => source.id);
   await Promise.all(
     realtimeIds.map((id) =>
@@ -3451,12 +3457,15 @@ async function probeRealtimeSources() {
     REALTIME_PROBE_IDS.map(async (id) => {
       const before = await lastKnownFingerprint(id);
 
+      const storeId = (sourceById.get(id) || {}).storeId || "";
+
       try {
         const fresh = await loadSource(id, { force: true });
         const after = rankingFingerprint(fresh);
 
         return {
           id,
+          storeId,
           // 수집이 실패해 예전 캐시를 돌려받은 것(stale)은 "바뀌었다"가 아니다.
           changed: !fresh.stale && Boolean(after) && (!before || after !== before),
           stamp: fresh.sourceStamp || "",
@@ -3464,7 +3473,7 @@ async function probeRealtimeSources() {
         };
       } catch (error) {
         console.error(`[collect] probe ${id}:`, error);
-        return { id, changed: false, stamp: "", ok: false };
+        return { id, storeId, changed: false, stamp: "", ok: false };
       }
     })
   );
@@ -3769,38 +3778,35 @@ async function handleRequest(request, response) {
       } else {
         probe = await probeRealtimeSources();
 
-        // 정각마다 한 번은 무조건 다시 쓴다. 아래 "바뀐 게 없으면 건너뛴다"는
-        // 규칙만 두면, 화면의 수집 시각이 마지막으로 순위가 움직인 시각에
-        // 눌러앉는다 — 실제로 10:28 에 멈춰 서서 정각과 어긋나 보였다.
-        //
-        // 서점은 매시 정각에 기준을 갈아 끼우므로, 그 시간대에 아직 한 번도
-        // 다시 쓰지 않았다면 순위가 같아 보여도 다시 쓴다. 수집 루프가 :01 에
-        // 들여다보니 매시 :01 에 화면이 갱신된다. 서점이 기준 시각을 늦게
-        // 올리거나(예스24) 아예 안 적어도(알라딘) 이 경로는 정각을 지킨다.
-        const lastSnapshot = await readDashboardSnapshot().catch(() => null);
-        const lastAt = lastSnapshot ? Date.parse(lastSnapshot.updatedAt || "") : NaN;
-        const writtenThisHour =
-          Number.isFinite(lastAt) &&
-          Math.floor(lastAt / HOUR_MS) === Math.floor(Date.now() / HOUR_MS);
+        // 어느 서점이 실제로 순위를 갈아 끼웠는지를 서점별로 가른다. 세 곳은
+        // 갈아 끼우는 시각이 서로 다르다 — 교보가 11:00 기준을 올린 순간에도
+        // 예스24는 아직 09:00 기준을 내주고 있다. 한 곳이 바뀌었다고 세 곳을
+        // 모두 다시 긁으면, 안 바뀐 서점의 수집 시각까지 지금으로 당겨져
+        // 화면이 "방금 바뀐 값"이라고 말하게 된다. 실제로는 몇 시간 전 값이다.
+        const changedStores = new Set(
+          probe.results.filter((entry) => entry.changed && entry.storeId).map((e) => e.storeId)
+        );
 
-        // 서점이 아직 순위를 갈지 않았으면 여기서 끝낸다. 나머지 56개를 다시
-        // 긁어 봐야 같은 값이고, 스냅샷을 다시 쓰면 ▲▼ 의 비교 기준이 방금으로
-        // 당겨져 "직전 수집 대비"가 15분 전 대비가 되어 버린다.
-        if (!probe.changed && writtenThisHour && url.searchParams.get("force") !== "1") {
+        // 아무 서점도 안 바뀌었으면 여기서 끝낸다. 나머지를 다시 긁어 봐야 같은
+        // 값이고, 스냅샷을 다시 쓰면 ▲▼ 의 비교 기준이 방금으로 당겨진다.
+        if (!changedStores.size && url.searchParams.get("force") !== "1") {
           jsonResponse(response, 200, {
             ok: true,
             scope,
             skipped: true,
-            reason:
-              "이 시간대에는 이미 수집했고 서점 순위도 지난 수집과 같아 건너뛰었습니다.",
+            reason: "세 서점 모두 순위가 지난 수집과 같아 건너뛰었습니다.",
             probe: probe.results,
             elapsedMs: Date.now() - startedAt
           });
           return;
         }
 
-        // 확인용으로 방금 받은 세 개는 다시 부르지 않는다.
-        await refreshRealtimeSources(new Set(REALTIME_PROBE_IDS));
+        // 바뀐 서점만 다시 가져온다. 확인용으로 방금 받은 세 개는 빼고.
+        // force=1 은 사람이 부른 강제 수집이므로 서점을 가리지 않는다.
+        await refreshRealtimeSources(
+          new Set(REALTIME_PROBE_IDS),
+          changedStores.size ? changedStores : null
+        );
       }
 
       const payload = await rebuildDashboardSnapshot(`collect:${scope}`);
