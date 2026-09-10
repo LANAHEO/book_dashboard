@@ -2589,8 +2589,29 @@ a.focus-chip:hover {
   font-weight: 600;
 }
 
-.cs-basis-cell {
-  padding-right: 10px;
+/* 표가 100% 폭인데 이 칸에만 폭을 주지 않아서, 남는 공간을 전부 여기가 흡수했다.
+   그래서 "서점이 밝힌 순위 기준"과 "우리 수집"이 멀찍이 떨어져 보였다(1280px 에서
+   글자 사이 114px). 내용 폭까지만 쓰게 하고, 남는 공간은 맨 오른쪽 지연 칸이
+   가져간다 — 글자 간격이 45px 로 줄었다.
+   nowrap 이 필요하다: 폭을 내용에 맡기면서 줄바꿈을 허용하면 "2026.09.10 11:00"
+   이나 "매시 정각 기준"이 잘게 접힌다. 접지 않아도 420px 화면에서 카드가 넘치지
+   않는 것을 확인했다.
+
+   선택자에 .cs-table tbody 를 붙여야 한다: 위의 `.cs-table tbody td { padding: 7px 0 }`
+   가 명시도(0,1,2)로 단일 클래스(0,1,0)를 덮어서, 여기 적던 padding-right 가
+   그동안 한 번도 먹지 않았다 — 그래서 폭을 줄이자마자 글자가 맞닿았다. */
+.cs-table tbody td.cs-basis-cell {
+  width: 1%;
+  white-space: nowrap;
+  padding-right: 16px;
+}
+
+/* 아주 좁은 화면에서는 접는 편이 낫다. "2026.08.31 ~ 2026.09.06" 을 한 줄로 버티면
+   360px 에서 예스24 카드가 가로로 넘쳤다. 넘쳐서 잘리는 것보다 두 줄이 낫다. */
+@media (max-width: 380px) {
+  .cs-table tbody td.cs-basis-cell {
+    white-space: normal;
+  }
 }
 
 .cs-basis {
@@ -2614,7 +2635,9 @@ a.focus-chip:hover {
 }
 
 .cs-collected {
-  width: 5.6em;
+  /* 아래 "마지막 확인 …" 줄이 더 길어서 고정 폭은 뜻이 없다. 내용만큼만 쓰고
+     기준 칸 바로 옆에 붙인다. */
+  width: 1%;
   color: var(--muted-strong);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
@@ -2633,10 +2656,16 @@ a.focus-chip:hover {
    한눈에 보여야 해서 숫자에 색을 준다 — 표 안의 다른 숫자와 헷갈리지 않게
    오른쪽 정렬한다. */
 .cs-lag {
-  width: 3.4em;
+  /* 폭을 정하지 않아 남는 공간을 이 칸이 흡수한다. 숫자는 오른쪽 정렬이라
+     표 끝에 붙고, 앞의 두 칸은 서로 붙는다. */
   text-align: right;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
+/* 여기도 위의 `.cs-table tbody td` 를 이겨야 왼쪽 여백이 먹는다. */
+.cs-table tbody td.cs-lag {
+  padding-left: 10px;
 }
 
 .cs-lag-value {
