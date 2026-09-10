@@ -3769,15 +3769,30 @@ async function handleRequest(request, response) {
       } else {
         probe = await probeRealtimeSources();
 
+        // 정각마다 한 번은 무조건 다시 쓴다. 아래 "바뀐 게 없으면 건너뛴다"는
+        // 규칙만 두면, 화면의 수집 시각이 마지막으로 순위가 움직인 시각에
+        // 눌러앉는다 — 실제로 10:28 에 멈춰 서서 정각과 어긋나 보였다.
+        //
+        // 서점은 매시 정각에 기준을 갈아 끼우므로, 그 시간대에 아직 한 번도
+        // 다시 쓰지 않았다면 순위가 같아 보여도 다시 쓴다. 수집 루프가 :01 에
+        // 들여다보니 매시 :01 에 화면이 갱신된다. 서점이 기준 시각을 늦게
+        // 올리거나(예스24) 아예 안 적어도(알라딘) 이 경로는 정각을 지킨다.
+        const lastSnapshot = await readDashboardSnapshot().catch(() => null);
+        const lastAt = lastSnapshot ? Date.parse(lastSnapshot.updatedAt || "") : NaN;
+        const writtenThisHour =
+          Number.isFinite(lastAt) &&
+          Math.floor(lastAt / HOUR_MS) === Math.floor(Date.now() / HOUR_MS);
+
         // 서점이 아직 순위를 갈지 않았으면 여기서 끝낸다. 나머지 56개를 다시
         // 긁어 봐야 같은 값이고, 스냅샷을 다시 쓰면 ▲▼ 의 비교 기준이 방금으로
         // 당겨져 "직전 수집 대비"가 15분 전 대비가 되어 버린다.
-        if (!probe.changed && url.searchParams.get("force") !== "1") {
+        if (!probe.changed && writtenThisHour && url.searchParams.get("force") !== "1") {
           jsonResponse(response, 200, {
             ok: true,
             scope,
             skipped: true,
-            reason: "서점 순위가 지난 수집과 같아 전체 수집을 건너뛰었습니다.",
+            reason:
+              "이 시간대에는 이미 수집했고 서점 순위도 지난 수집과 같아 건너뛰었습니다.",
             probe: probe.results,
             elapsedMs: Date.now() - startedAt
           });

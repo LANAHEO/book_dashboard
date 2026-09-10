@@ -2629,13 +2629,24 @@ a.focus-chip:hover {
   font-weight: 500;
 }
 
-/* 서점 기준과 우리 수집의 차이. 목표(5분)를 넘었는지가 한눈에 보여야 해서
-   숫자에 색을 준다 — 표 안의 다른 숫자와 헷갈리지 않게 오른쪽 정렬한다. */
+/* 정각으로부터 우리가 몇 분 뒤에 가져왔는지. 목표(5분)를 넘었는지가 한눈에
+   보여야 해서 숫자에 색을 준다 — 표 안의 다른 숫자와 헷갈리지 않게 오른쪽
+   정렬한다. 서점이 늦게 표기한 시간은 그 아래 작게 덧붙되, 우리 잘못이
+   아니므로 경고색을 주지 않는다. */
 .cs-lag {
-  width: 3.4em;
+  width: 6.4em;
   text-align: right;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
+.cs-lag-store {
+  display: block;
+  margin-top: 2px;
+  color: var(--stone);
+  font-size: 10px;
+  font-weight: 500;
+  white-space: normal;
 }
 
 .cs-lag-value {

@@ -937,6 +937,19 @@ function parseStoreStamp(stamp) {
   return Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4] - 9, +m[5]);
 }
 
+// 이 칸은 오래 오해를 만들었다. 예전에는 (우리 수집 − 서점 기준)을 통째로 적어서
+// 예스24가 88분으로 빨갛게 떴는데, 그건 우리가 늦어서가 아니었다. 예스24는 10:39
+// 에도 자기 페이지에 "09:00 기준"이라고 적어 둔다 — 우리가 아무리 자주 가져와도
+// 그 차이는 줄지 않는다. 우리 잘못이 아닌 것을 우리 지연으로 적으면, 정작 우리가
+// 늦었을 때 그 숫자를 믿지 않게 된다.
+//
+// 그래서 둘로 나눈다. 서점은 매시 정각에 기준을 갈아 끼우므로, 우리가 가져온
+// 순간에 서점이 내주고 있어야 할 기준은 그 직전 정각이다.
+//   우리 지연     = 우리 수집 − 직전 정각      (우리가 통제하는 값. 목표 5분)
+//   서점 표기 지연 = 직전 정각 − 서점이 적은 기준 (서점이 늦게 올린 값)
+// 둘을 더하면 예전에 적던 그 숫자가 된다.
+const HOUR_MS = 60 * 60 * 1000;
+
 function renderCollectLag(group) {
   const storeAt = parseStoreStamp(group.sourceStamp);
 
@@ -950,15 +963,26 @@ function renderCollectLag(group) {
     return `<span class="cs-lag-na">–</span>`;
   }
 
-  const minutes = Math.round((ours - storeAt) / 60000);
-  const over = minutes > COLLECT_LAG_LIMIT_MINUTES;
-  const hint = over
-    ? `서점이 아직 이 시각 기준을 최신으로 내주고 있어 차이가 ${minutes}분입니다. 우리가 더 자주 가져와도 서점이 새 기준을 올리기 전에는 줄지 않습니다.`
-    : `서점 기준과 ${minutes}분 차이로 가져왔습니다.`;
+  const due = Math.floor(ours / HOUR_MS) * HOUR_MS;
+  const ourLag = Math.max(0, Math.round((ours - due) / 60000));
+  const storeLag = Math.max(0, Math.round((due - storeAt) / 60000));
+  const over = ourLag > COLLECT_LAG_LIMIT_MINUTES;
+
+  const hint = [
+    `우리는 정각으로부터 ${ourLag}분 뒤에 가져왔습니다.`,
+    storeLag > 0
+      ? `이 서점은 ${storeLag}분 지난 기준(${group.sourceStamp})을 아직 최신으로 내주고 있습니다 — 우리가 더 자주 가져와도 줄지 않는 차이입니다.`
+      : "서점이 이 시간대 기준을 이미 올린 뒤에 가져왔습니다."
+  ].join(" ");
+
+  const store =
+    storeLag > 0
+      ? `<span class="cs-lag-store">서점 표기 ${escapeHtml(storeLag)}분 늦음</span>`
+      : "";
 
   return `<span class="cs-lag-value${over ? " is-over" : " is-ok"}" title="${escapeHtml(
     hint
-  )}">${escapeHtml(minutes)}분</span>`;
+  )}">${escapeHtml(ourLag)}분</span>${store}`;
 }
 
 function renderSourceBasis(list) {
@@ -1671,7 +1695,7 @@ function renderStoreStatus() {
                 <th scope="col">구분</th>
                 <th scope="col">서점이 밝힌 순위 기준</th>
                 <th scope="col">우리 수집</th>
-                <th scope="col">시차</th>
+                <th scope="col">우리 지연</th>
               </tr>
             </thead>
             <tbody>${rows}</tbody>
@@ -1693,8 +1717,12 @@ function renderStoreStatus() {
         <span class="cs-summary-hint">서점 3곳 기준 보기</span>
       </summary>
       <p class="cs-lede">
-        왼쪽은 <strong>서점이 그 순위를 언제 기준으로 집계했는지</strong>,
-        오른쪽은 <strong>우리가 그것을 언제 가져왔는지</strong>입니다. 둘은 다른 값입니다.
+        <strong>서점이 밝힌 순위 기준</strong>은 서점이 그 순위를 언제 기준으로 집계했는지,
+        <strong>우리 수집</strong>은 우리가 그것을 언제 가져왔는지입니다.
+        실시간 순위는 매시 정각에 갈리므로 우리도 <strong>매시 정각 직후에 가져옵니다</strong>.
+        <strong>우리 지연</strong>은 정각으로부터 몇 분 뒤에 가져왔는지입니다.
+        서점이 지난 시간 기준을 아직 최신으로 내주고 있으면 그 사실은 따로 적습니다 —
+        그건 우리가 더 자주 가져와도 줄지 않는 차이입니다.
       </p>
       ${renderSwipeSwitcher(stores, "수집 시점 서점 넘겨 보기")}
       <div class="cs-grid">${cards}</div>
