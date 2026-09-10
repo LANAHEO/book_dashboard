@@ -271,23 +271,39 @@ function titleFragment(title) {
   return `#:~:text=${encodeURIComponent(snippet)}`;
 }
 
-// 폰에서 눌렀을 때 서점의 모바일 페이지로 보낸다.
+// 폰에서 눌렀을 때 서점의 모바일 "순위 페이지"로 보낸다. 상세 페이지가 아니다 —
+// 이 링크의 목적은 그 책이 서점 목록에서 몇 위에 있는지 보여 주는 것이다.
 //
-// 세 서점을 모바일 UA 로 직접 열어 보고 정한 규칙이다. 손댈 곳은 예스24뿐이었다.
-//   교보   product·store 둘 다 <meta viewport=device-width> 라 그대로 잘 열린다.
+// 세 서점을 아이폰 UA 로 직접 열어 보고 정했다. 손댈 곳은 예스24 실시간뿐이었다.
+//   교보   목록·상세 모두 <meta viewport=device-width> 라 폰에서 그대로 열린다.
 //          mobile.kyobobook.co.kr 은 404 로 아예 없다.
-//   알라딘  데스크톱 주소가 /m/mproduct·/m/mbest 로 서점이 알아서 넘겨 준다.
+//   알라딘  데스크톱 목록 주소를 서점이 /m/mbest.aspx 로 넘겨 주고, page·cnt 까지
+//          그대로 가져간다 — 51위 이후 쪽수도 유지된다.
 //   예스24  데스크톱은 viewport 가 width=1170 인 고정폭이라 폰에서 축소돼 보인다.
-//          상세만 m.yes24.com/Goods/Detail/{id} 가 있고(device-width), 목록은
-//          모바일 경로가 없다 — /product/category/... 는 m 쪽에서 전부 404다.
+//          모바일 순위 페이지는 m.yes24.com/home/best?dispNo={분야}&tab={기간} 이고,
+//          dispNo 에는 우리가 쓰는 categoryNumber 가 그대로 들어간다(소설·인문으로
+//          확인). 기간 탭은 종합(1)·실시간(2)·스테디(3) 셋뿐이라 일간·주간은
+//          모바일에 아예 없다. 종합은 일간·주간과 다른 집계여서 그리로 보내면
+//          우리가 보여 준 순위와 다른 순위를 열게 되므로, 그 둘은 데스크톱 목록에
+//          그대로 둔다.
+//
 // 화면 폭은 그릴 때 한 번 본다(이 앱에는 resize 리스너가 없다). 폰을 돌려 경계를
 // 넘나들면 링크는 다음 자동 새로고침에서 맞춰진다 — 접기/펼치기와 같은 방식이다.
-const YES24_GOODS_URL = /^https?:\/\/(?:www\.)?yes24\.com\/product\/goods\/(\d+)/i;
+const YES24_REALTIME_LIST =
+  /^https?:\/\/(?:www\.)?yes24\.com\/product\/category\/realtimebestseller\?([^#]*)/i;
 
-function yes24MobileUrl(url) {
-  const match = String(url || "").match(YES24_GOODS_URL);
+function yes24MobileListUrl(url) {
+  const match = String(url || "").match(YES24_REALTIME_LIST);
 
-  return match ? `https://m.yes24.com/Goods/Detail/${match[1]}` : "";
+  if (!match) {
+    return "";
+  }
+
+  const category = new URLSearchParams(match[1]).get("categoryNumber");
+
+  return category
+    ? `https://m.yes24.com/home/best?dispNo=${encodeURIComponent(category)}&tab=2`
+    : "";
 }
 
 // 순위 목록으로 가는 링크. 그 책 제목까지 스크롤되도록 조각을 붙인다.
@@ -295,10 +311,8 @@ function yes24MobileUrl(url) {
 // 제목 조각이 언제나 우선이다. 서버가 붙여 둔 상품 id 앵커(#ordChk_, #addInputShop_)는
 // 카드 하단을 가리켜서 정작 제목이 화면 밖으로 밀린다 — 제목을 모를 때만 쓴다.
 function rankHref(item) {
-  // 예스24는 모바일 목록이 없다. 폰에서는 고정폭 목록으로 보내는 것보다 그 책의
-  // 모바일 상세로 보내는 편이 낫다 — 어차피 보려던 것은 그 책이다.
   if (isNarrowScreen()) {
-    const mobile = yes24MobileUrl(item.link);
+    const mobile = yes24MobileListUrl(item.listUrl);
 
     if (mobile) {
       return mobile;
@@ -1117,8 +1131,7 @@ function renderFocusBoardV2() {
             // book.link 는 서버가 이 클릭을 위해 만든 값이다 — 카탈로그에서 얻은
             // 교보 링크가 1순위, 없으면 교보 순위에서 얻은 링크, 그다음이 다른
             // 서점이다.
-            const titleHref =
-              (isNarrowScreen() && yes24MobileUrl(book.link)) || book.link || "";
+            const titleHref = book.link || "";
             const titleHint = `${book.title} 교보문고 상품 페이지 열기`;
 
             const droppedOut = renderDroppedOut(book);
