@@ -281,28 +281,35 @@ function titleFragment(title) {
 //          그대로 가져간다 — 51위 이후 쪽수도 유지된다.
 //   예스24  데스크톱은 viewport 가 width=1170 인 고정폭이라 폰에서 축소돼 보인다.
 //          모바일 순위 페이지는 m.yes24.com/home/best?dispNo={분야}&tab={기간} 이고,
-//          dispNo 에는 우리가 쓰는 categoryNumber 가 그대로 들어간다(소설·인문으로
-//          확인). 기간 탭은 종합(1)·실시간(2)·스테디(3) 셋뿐이라 일간·주간은
-//          모바일에 아예 없다. 종합은 일간·주간과 다른 집계여서 그리로 보내면
-//          우리가 보여 준 순위와 다른 순위를 열게 되므로, 그 둘은 데스크톱 목록에
-//          그대로 둔다.
+//          dispNo 에는 우리가 쓰는 categoryNumber 가 그대로 들어간다.
+//
+// 기간 탭 번호는 페이지의 #bestMnu 에서 직접 읽었다. 눈으로 훑어서는 못 찾는다 —
+// 화면에 적힌 이름이 "일간·주간"이 아니라 "일별·주별"이고, 번호도 이어져 있지
+// 않다(월별이 5, 주별이 6이다). 세 기간 모두 국내도서 전체에서 우리 상위 5권과
+// 그대로 일치하는 것을 확인하고 정했다.
+//
+// 쪽수(pageNumber)는 넘기지 않는다. 데스크톱은 한 쪽 24권이고 모바일은 쪽수를
+// 그렇게 세지 않아서, 그대로 넘기면 엉뚱한 쪽이 열린다. 목록 첫머리에서 시작한다.
 //
 // 화면 폭은 그릴 때 한 번 본다(이 앱에는 resize 리스너가 없다). 폰을 돌려 경계를
 // 넘나들면 링크는 다음 자동 새로고침에서 맞춰진다 — 접기/펼치기와 같은 방식이다.
-const YES24_REALTIME_LIST =
-  /^https?:\/\/(?:www\.)?yes24\.com\/product\/category\/realtimebestseller\?([^#]*)/i;
+const YES24_LIST_URL =
+  /^https?:\/\/(?:www\.)?yes24\.com\/product\/category\/(realtime|day|week)bestseller\?([^#]*)/i;
+
+const YES24_MOBILE_TAB = { realtime: 2, day: 4, week: 6 };
 
 function yes24MobileListUrl(url) {
-  const match = String(url || "").match(YES24_REALTIME_LIST);
+  const match = String(url || "").match(YES24_LIST_URL);
 
   if (!match) {
     return "";
   }
 
-  const category = new URLSearchParams(match[1]).get("categoryNumber");
+  const tab = YES24_MOBILE_TAB[match[1].toLowerCase()];
+  const category = new URLSearchParams(match[2]).get("categoryNumber");
 
-  return category
-    ? `https://m.yes24.com/home/best?dispNo=${encodeURIComponent(category)}&tab=2`
+  return tab && category
+    ? `https://m.yes24.com/home/best?dispNo=${encodeURIComponent(category)}&tab=${tab}`
     : "";
 }
 
