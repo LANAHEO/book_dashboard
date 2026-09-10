@@ -288,8 +288,14 @@ function titleFragment(title) {
 // 않다(월별이 5, 주별이 6이다). 세 기간 모두 국내도서 전체에서 우리 상위 5권과
 // 그대로 일치하는 것을 확인하고 정했다.
 //
-// 쪽수(pageNumber)는 넘기지 않는다. 데스크톱은 한 쪽 24권이고 모바일은 쪽수를
-// 그렇게 세지 않아서, 그대로 넘기면 엉뚱한 쪽이 열린다. 목록 첫머리에서 시작한다.
+// 쪽수는 넘겨야 한다. 모바일 목록도 한 쪽에 24권이라(우리 100위 데이터에 맞춰
+// 재 보니 1쪽 1~24위, 2쪽 25~48위, 3쪽 49~72위) 쪽수를 안 붙이면 60위 책을
+// 눌러도 1~24위만 있는 첫 쪽이 열린다. 파라미터 이름은 page 가 아니라 pageNo 다 —
+// page 는 조용히 무시되고 늘 첫 쪽이 나온다.
+//
+// 실시간은 데스크톱 목록이 100위를 한 쪽에 담아서 우리 링크에 쪽 번호가 없다.
+// 그래서 URL 에 있는 쪽수를 옮기는 대신 순위에서 직접 계산한다 — 세 기간 모두
+// 같은 규칙으로 맞는다.
 //
 // 화면 폭은 그릴 때 한 번 본다(이 앱에는 resize 리스너가 없다). 폰을 돌려 경계를
 // 넘나들면 링크는 다음 자동 새로고침에서 맞춰진다 — 접기/펼치기와 같은 방식이다.
@@ -297,8 +303,9 @@ const YES24_LIST_URL =
   /^https?:\/\/(?:www\.)?yes24\.com\/product\/category\/(realtime|day|week)bestseller\?([^#]*)/i;
 
 const YES24_MOBILE_TAB = { realtime: 2, day: 4, week: 6 };
+const YES24_MOBILE_PAGE_SIZE = 24;
 
-function yes24MobileListUrl(url) {
+function yes24MobileListUrl(url, rank) {
   const match = String(url || "").match(YES24_LIST_URL);
 
   if (!match) {
@@ -308,9 +315,14 @@ function yes24MobileListUrl(url) {
   const tab = YES24_MOBILE_TAB[match[1].toLowerCase()];
   const category = new URLSearchParams(match[2]).get("categoryNumber");
 
-  return tab && category
-    ? `https://m.yes24.com/home/best?dispNo=${encodeURIComponent(category)}&tab=${tab}`
-    : "";
+  if (!tab || !category) {
+    return "";
+  }
+
+  const href = `https://m.yes24.com/home/best?dispNo=${encodeURIComponent(category)}&tab=${tab}`;
+  const pageNo = Math.ceil(Number(rank) / YES24_MOBILE_PAGE_SIZE);
+
+  return Number.isFinite(pageNo) && pageNo > 1 ? `${href}&pageNo=${pageNo}` : href;
 }
 
 // 순위 목록으로 가는 링크. 그 책 제목까지 스크롤되도록 조각을 붙인다.
@@ -319,10 +331,10 @@ function yes24MobileListUrl(url) {
 // 카드 하단을 가리켜서 정작 제목이 화면 밖으로 밀린다 — 제목을 모를 때만 쓴다.
 function rankHref(item) {
   if (isNarrowScreen()) {
-    const mobile = yes24MobileListUrl(item.listUrl);
+    const mobile = yes24MobileListUrl(item.listUrl, item.rank);
 
     if (mobile) {
-      return mobile;
+      return mobile + titleFragment(item.title);
     }
   }
 
