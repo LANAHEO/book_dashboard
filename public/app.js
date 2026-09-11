@@ -1154,12 +1154,14 @@ function renderFocusBoardV2() {
             const titleHint = `${book.title} 교보문고 상품 페이지 열기`;
 
             const droppedOut = renderDroppedOut(book);
+            // 순위가 잡힌 카드에는 상태 표시를 달지 않는다. 위에 순위 네모와 막대가
+            // 이미 다 찍혀 있어서 "순위 확인"은 아무것도 더 말해 주지 않았고, 칸을
+            // 나누는 줄까지 그어져 카드마다 한 줄씩 늘었다.
+            //
+            // 이탈과 진입 대기는 남긴다. 그 둘은 순위가 하나도 없어 카드 위쪽이 빈
+            // 경우라, 표시가 없으면 수집이 빠진 것인지 순위에 없는 것인지 알 수 없다.
             // 이번 수집에 없고 직전에는 있었다면 "진입 대기"가 아니라 이탈이다.
-            const statusLabel = appearances.length
-              ? "순위 확인"
-              : droppedOut
-                ? "순위 이탈"
-                : "진입 대기";
+            const statusLabel = appearances.length ? "" : droppedOut ? "순위 이탈" : "진입 대기";
 
             return `
               <article class="focus-card${book.pinned ? " is-pinned" : ""}">
@@ -1193,13 +1195,13 @@ function renderFocusBoardV2() {
                 <div class="focus-bar-list">
                   ${plan.bars.map((bar) => renderFocusBar(bar)).join("")}
                 </div>
-                <div class="focus-card-foot">
-                  <span class="focus-status ${appearances.length ? "active" : ""}${
-                    !appearances.length && droppedOut ? " dropped" : ""
-                  }">
+                ${statusLabel
+                  ? `<div class="focus-card-foot">
+                  <span class="focus-status${droppedOut ? " dropped" : ""}">
                     ${statusLabel}
                   </span>
-                </div>
+                </div>`
+                  : ""}
                 ${droppedOut ? `<div class="focus-appearances">${droppedOut}</div>` : ""}
               </article>
             `;
