@@ -2312,6 +2312,19 @@ async function fetchAladinPublishedAt(link) {
   return normalizePublishedAt(extract(html, /datePublished"?\s*content="([^"]+)"/i));
 }
 
+// 검색으로는 찾을 수 없어 사람이 직접 지정한 교보 상품 링크.
+//
+// 출간 전 도서가 그렇다. "읽는 인간"(상상스퀘어, 2026.09.30)은 교보 검색 결과에
+// 아예 나오지 않아서, 아래 제목 대조가 검색 첫 쪽에 있던 "읽는 인간 리터러시를
+// 경험하라"(2021, 다른 출판사)를 같은 책으로 집었다. 제목 앞부분이 같으면
+// 부분일치에 걸리기 때문이다. 링크가 비는 것도 아니고 그럴듯한 남의 책으로
+// 채워져서 화면만 봐서는 틀린 줄 모른다.
+const KYOBO_LINK_OVERRIDES = new Map(
+  [["읽는 인간", "https://product.kyobobook.co.kr/detail/S000221327640"]].map(
+    ([title, link]) => [normalizeTitleKey(title), link]
+  )
+);
+
 // 순위권 밖 도서는 교보 베스트셀러 API에 없으므로 상품 링크를 검색으로 찾는다.
 // 검색 결과에는 pid와 제목이 붙어 있어(data-kbbfn-*) 동명 도서·다른 판본을
 // 집지 않도록 제목을 대조할 수 있다.
@@ -2322,23 +2335,37 @@ async function fetchKyoboProductLink(title) {
     return "";
   }
 
+  const override = KYOBO_LINK_OVERRIDES.get(key);
+
+  if (override) {
+    return override;
+  }
+
   const html = await fetchText(
     `https://search.kyobobook.co.kr/search?keyword=${encodeURIComponent(title)}&target=total`,
     { accept: "text/html,application/xhtml+xml" }
   );
 
   const pattern = /data-kbbfn-pid="([^"]+)"[^>]*(?:[^>]*>)?[\s\S]{0,400}?data-kbbfn-title="([^"]+)"/g;
+  const candidates = [];
   let match;
 
   while ((match = pattern.exec(html))) {
     const candidate = normalizeTitleKey(match[2]);
 
-    if (candidate && (candidate === key || candidate.includes(key) || key.includes(candidate))) {
-      return `https://product.kyobobook.co.kr/detail/${match[1]}`;
+    if (candidate) {
+      candidates.push({ key: candidate, pid: match[1] });
     }
   }
 
-  return "";
+  // 제목이 그대로 같은 것이 있으면 그것이 답이다. 부분일치는 부제·판형이 붙어
+  // 제목이 늘어난 경우를 잡으려고 둔 것인데, 검색 순서가 앞선다는 이유만으로
+  // 남의 책을 먼저 집을 수 있어 정확히 같은 것을 먼저 훑는다.
+  const exact = candidates.find((entry) => entry.key === key);
+  const loose =
+    exact || candidates.find((entry) => entry.key.includes(key) || key.includes(entry.key));
+
+  return loose ? `https://product.kyobobook.co.kr/detail/${loose.pid}` : "";
 }
 
 // 카탈로그 한 권을 정확한 출간일 + 교보 링크로 채운다. 개별 실패는 삼킨다 —
