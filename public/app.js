@@ -1690,6 +1690,22 @@ function formatClock(value) {
   }).format(at);
 }
 
+function latestMoment(...values) {
+  let best = "";
+  let bestAt = -Infinity;
+
+  for (const value of values) {
+    const at = value ? Date.parse(value) : NaN;
+
+    if (Number.isFinite(at) && at > bestAt) {
+      bestAt = at;
+      best = value;
+    }
+  }
+
+  return best;
+}
+
 // 위 큰 숫자 밑에 "순위가 마지막으로 바뀐 때"를 적는다.
 //
 // 두 값은 다르고, 다른 것이 정상이다. 서점을 5분마다 확인해도 서점이 순위를
@@ -1832,8 +1848,11 @@ function renderDashboard() {
   // 바꿨을 때만 움직이므로, 조용한 40분이 지나면 40분째 아무것도 안 한 것처럼
   // 보인다. 오늘 이 숫자 하나 때문에 수집이 멈췄다고 여러 번 읽혔다.
   // 순위가 언제 바뀌었는지는 바로 아래 줄에 적는다.
+  // 둘 중 더 최근 것을 쓴다. 확인 기록은 순위표를 다시 만들기 *전에* 남기므로,
+  // 순위가 바뀐 회차에는 순위표 쪽이 몇 초 늦다. 그대로 두면 큰 숫자가 아래
+  // 줄보다 이른 시각을 가리켜 거꾸로 보인다.
   elements.generatedAt.textContent = formatDateTime(
-    state.dashboard.lastCheckedAt || state.dashboard.generatedAt
+    latestMoment(state.dashboard.lastCheckedAt, state.dashboard.generatedAt)
   );
   renderRankChanged();
   renderStoreStatus();
