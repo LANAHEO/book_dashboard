@@ -189,12 +189,12 @@ const FOCUS_CATALOG_ID = "publisher-catalog";
 // 문장부호는 남기므로, "AI, 신의 탄생"의 쉼표를 빠뜨리면 앞부분 일치가 깨져
 // 그 책만 조용히 고정되지 않는다.
 const FOCUS_PINNED_TITLES = [
+  "가브리엘의 왕초보 영어회화",
   "문해내공",
   "옥스브리지의 철학 수업",
   "이효석의 21세기 투자법",
   "AI, 신의 탄생 인간의 종말",
-  "AI 시대 어떻게 일할 것인가",
-  "가브리엘의 왕초보 영어회화"
+  "AI 시대 어떻게 일할 것인가"
 ];
 
 const FOCUS_PINNED_KEYS = FOCUS_PINNED_TITLES.map((title) =>
