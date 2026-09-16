@@ -2541,14 +2541,32 @@ function attachListUrls(definition, items) {
 // 그래서 updatedAt 은 "이 값이 우리 것이 된 시각", checkedAt 은 "마지막으로 서점을
 // 열어 확인한 시각"으로 나눈다. 앞의 값이 서점 기준과 견줄 수 있는 값이고, 뒤의
 // 값이 수집이 돌고 있음을 보여 준다.
+// "이 목록이 바뀌었나"는 순위 전체로 본다. rankingFingerprint 를 쓰면 안 된다 —
+// 그쪽은 서점이 적어 준 기준 시각을 우선 보는데, 그건 실시간 탐지용이다.
+//
+// 주간 기준은 일주일 내내 "2026.09 1주" 로 같다. 그 값으로 견주면 주 안에서
+// 목록이 아무리 움직여도 "안 바뀌었다"가 되어 수집 시각이 얼어붙는다. 실제로
+// 교보 주간·월간이 9월 10일에 멈춘 채로 엿새를 갔다. 내용은 매번 새로 받아
+// 와서 서점과 똑같았는데(상위 10권 10/10 일치), 화면의 "우리 수집"만 엿새 전을
+// 가리켜 수집이 죽은 것처럼 보였다.
+function rankingContentKey(payload) {
+  if (!payload) {
+    return "";
+  }
+
+  const items = (payload.items || []).map((item) => `${item.rank}:${item.title}`).join("|");
+
+  return `${payload.sourceStamp || ""}#${items}`;
+}
+
 function sameRanking(previous, draft) {
   if (!previous) {
     return false;
   }
 
-  const before = rankingFingerprint(previous);
+  const before = rankingContentKey(previous);
 
-  return Boolean(before) && before === rankingFingerprint(draft);
+  return Boolean(before) && before === rankingContentKey(draft);
 }
 
 function buildPayload(definition, result, options = {}) {
