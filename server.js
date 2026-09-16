@@ -1522,12 +1522,17 @@ function createHeaders(extra = {}) {
 // 목록이 많아 한 번에 수십 건이 나가면 서점 쪽에서 차단당하므로
 // 도메인마다 동시 요청 수를 제한한다.
 //
-// 알라딘만 8로 올려 뒀다. 요청 하나가 2.3초씩 걸리는데 분야가 30개라 4로는
-// 알라딘 혼자 수집 시간의 절반을 먹었다. 16개 분야로 재보니 동시 4에서 10.7초,
-// 8에서 5.4초였고 요청당 지연(2351ms → 2463ms)도 오류(0건)도 늘지 않았다.
-// 12까지 올려도 4.9초라 더 나아지지 않아 8에서 멈췄다.
+// 알라딘을 8로 올려 뒀었다. 속도는 실제로 빨랐지만(16개 분야 기준 10.7초 → 5.4초)
+// 그 측정에서 오류가 0건이었던 것은 그때 그 순간의 이야기였다. 2026-09-16 에
+// 알라딘이 403 Forbidden 을 돌려주기 시작해 주간·일간과 분야 목록 다수가
+// "새 수집에 실패해 저장된 최근 순위를 보여줍니다" 상태로 넘어갔다. 화면에는
+// 며칠 전 순위가 그대로 떠 있었다.
+//
+// 빨리 받아 오는 것보다 차단당하지 않는 것이 먼저다. 수집은 이제 하루 종일
+// 끊기지 않고 도니까 한 회차가 몇 초 느린 것은 아무 문제가 아니지만, 한 번
+// 차단당하면 그 목록은 다음 성공까지 통째로 묵은 값이 된다.
 const HOST_CONCURRENCY_BY_HOST = {
-  "www.aladin.co.kr": 8
+  "www.aladin.co.kr": 3
 };
 
 function hostConcurrency(host) {
@@ -3553,6 +3558,30 @@ async function lastKnownFingerprint(id) {
   return persisted && persisted.payload ? rankingFingerprint(persisted.payload) : "";
 }
 
+// 실시간 수집 한 회차. 자동 수집기와 화면이 열릴 때가 같은 길을 쓴다.
+//
+// 싼 이유는 먼저 세 곳만 찔러 보기 때문이다. 종합 실시간 세 개를 받아 지난번과
+// 견주고, 바뀐 서점의 목록만 다시 받는다. 아무 데도 안 바뀌었으면 요청 세 번으로
+// 끝난다. 가리지 않고 실시간 전부를 받으면 예순 개가 넘어 90초가 걸리고,
+// 그렇게 몰아치면 알라딘이 403 으로 막는다.
+async function collectRealtimeOnce(options = {}) {
+  const probe = await probeRealtimeSources();
+  const changedStores = new Set(
+    probe.results.filter((entry) => entry.changed && entry.storeId).map((e) => e.storeId)
+  );
+
+  if (!changedStores.size && !options.force) {
+    return { probe, changed: false };
+  }
+
+  await refreshRealtimeSources(
+    new Set(REALTIME_PROBE_IDS),
+    changedStores.size ? changedStores : null
+  );
+
+  return { probe, changed: true };
+}
+
 async function probeRealtimeSources() {
   const results = await Promise.all(
     REALTIME_PROBE_IDS.map(async (id) => {
@@ -3737,6 +3766,31 @@ async function handleRequest(request, response) {
 
   if (url.pathname === "/api/dashboard") {
     const refreshParam = url.searchParams.get("refresh");
+
+    // 화면이 열릴 때마다 서점을 한 번 들여다본다.
+    //
+    // 예전에는 저장해 둔 순위표를 그대로 내주기만 해서, 수집이 늦거나 막혀
+    // 있으면 화면을 열어도 묵은 값이 그대로 나왔다. 사용자가 열었다는 것은
+    // "지금 값을 보겠다"는 뜻이므로 그 자리에서 확인하는 것이 맞다.
+    //
+    // 전수 수집(refresh=realtime)은 예순 개가 넘어 90초가 걸리고 서점을
+    // 몰아쳐 403 을 부른다. 이 길은 종합 실시간 세 개만 받아 보고 바뀐 서점만
+    // 다시 받으므로, 조용할 때는 요청 세 번으로 끝난다.
+    if (refreshParam === "quick") {
+      try {
+        const result = await collectRealtimeOnce();
+
+        await writeCollectHeartbeat();
+
+        if (result.changed) {
+          await rebuildDashboardSnapshot("open");
+        }
+      } catch (error) {
+        // 확인에 실패해도 저장된 순위표는 내준다. 화면이 비는 것보다 낫다.
+        console.error("[dashboard] quick check failed:", error);
+      }
+    }
+
     const forceIds = getForcedSourceIds(refreshParam);
 
     if (!forceIds.length) {
@@ -3913,22 +3967,19 @@ async function handleRequest(request, response) {
       if (scope === "all") {
         await Promise.allSettled([refreshRealtimeSources(), refreshStandardSources()]);
       } else {
-        probe = await probeRealtimeSources();
+        // 바뀐 서점만 다시 가져온다. 세 곳은 순위를 갈아 끼우는 시각이 서로
+        // 달라서(교보가 11:00 기준을 올린 순간에도 예스24는 09:00 기준이다),
+        // 한 곳이 바뀌었다고 세 곳을 모두 긁으면 안 바뀐 서점의 수집 시각까지
+        // 지금으로 당겨진다.
+        const result = await collectRealtimeOnce({
+          force: url.searchParams.get("force") === "1"
+        });
+        probe = result.probe;
 
-        // 어느 서점이 실제로 순위를 갈아 끼웠는지를 서점별로 가른다. 세 곳은
-        // 갈아 끼우는 시각이 서로 다르다 — 교보가 11:00 기준을 올린 순간에도
-        // 예스24는 아직 09:00 기준을 내주고 있다. 한 곳이 바뀌었다고 세 곳을
-        // 모두 다시 긁으면, 안 바뀐 서점의 수집 시각까지 지금으로 당겨져
-        // 화면이 "방금 바뀐 값"이라고 말하게 된다. 실제로는 몇 시간 전 값이다.
-        const changedStores = new Set(
-          probe.results.filter((entry) => entry.changed && entry.storeId).map((e) => e.storeId)
-        );
-
-        // 아무 서점도 안 바뀌었으면 여기서 끝낸다. 나머지를 다시 긁어 봐야 같은
-        // 값이고, 스냅샷을 다시 쓰면 ▲▼ 의 비교 기준이 방금으로 당겨진다.
-        if (!changedStores.size && url.searchParams.get("force") !== "1") {
-          // 건너뛸 때야말로 남겨야 한다. 이 길로 끝나면 스냅샷을 안 쓰므로,
-          // 이 기록이 없으면 화면에는 확인한 흔적이 하나도 남지 않는다.
+        // 아무 서점도 안 바뀌었으면 여기서 끝낸다. 스냅샷을 다시 쓰면 ▲▼ 의
+        // 비교 기준이 방금으로 당겨진다. 대신 확인했다는 기록은 반드시 남긴다 —
+        // 이 길로 끝나면 스냅샷을 안 쓰므로, 없으면 화면에 흔적이 하나도 없다.
+        if (!result.changed) {
           await writeCollectHeartbeat();
           jsonResponse(response, 200, {
             ok: true,
@@ -3940,13 +3991,6 @@ async function handleRequest(request, response) {
           });
           return;
         }
-
-        // 바뀐 서점만 다시 가져온다. 확인용으로 방금 받은 세 개는 빼고.
-        // force=1 은 사람이 부른 강제 수집이므로 서점을 가리지 않는다.
-        await refreshRealtimeSources(
-          new Set(REALTIME_PROBE_IDS),
-          changedStores.size ? changedStores : null
-        );
       }
 
       await writeCollectHeartbeat();

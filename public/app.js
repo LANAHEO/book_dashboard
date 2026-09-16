@@ -2034,6 +2034,10 @@ async function loadDashboard(refresh = "") {
     } else {
       state.hasLoadedOnce = true;
       showIdleBadge();
+      // 첫 그림은 저장된 순위표로 즉시 띄우고, 그 직후에 서점을 확인한다.
+      // 열자마자 몇 초 빈 화면을 보는 것보다, 바로 보여 주고 몇 초 뒤에
+      // 최신으로 갈아 끼우는 편이 낫다.
+      window.setTimeout(() => loadDashboard("quick"), 0);
     }
   } catch (error) {
     // 한 번 실패했다고 화면을 비우지 않는다. 그 순간 보이던 값은 방금까지 맞던
@@ -2078,7 +2082,9 @@ function scheduleDashboardRefresh() {
   const delay = state.dashboard ? Math.max(collectIntervalMs(), 60_000) : 30_000;
 
   state.refreshTimer = window.setTimeout(() => {
-    loadDashboard();
+    // 열어 둔 화면도 주기마다 서점을 직접 확인한다. 저장된 값을 다시 읽기만
+    // 하면 수집이 늦어질 때 화면도 같이 늦는다.
+    loadDashboard("quick");
   }, delay);
 }
 
@@ -2097,10 +2103,11 @@ function watchTabReturn() {
       return;
     }
 
-    const age = Date.now() - Date.parse(state.dashboard.generatedAt || "");
+    // 돌아왔을 때가 "지금 값을 보겠다"는 순간이므로 서점까지 확인한다.
+    const age = Date.now() - Date.parse(state.dashboard.lastCheckedAt || "");
 
     if (!Number.isFinite(age) || age >= collectIntervalMs()) {
-      loadDashboard();
+      loadDashboard("quick");
     }
   });
 }
