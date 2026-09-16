@@ -45,6 +45,10 @@ on:
         default: realtime
         type: choice
         options: [realtime, all]
+      minutes:
+        description: "순환 수명(분). 비우면 330분. 점화 연결을 시험할 때만 줄인다."
+        required: false
+        type: string
 
 # 순환은 하나만 돈다. 새 실행이 뜨면 돌고 있던 것을 끊고 새로 시작한다 —
 # 그래야 오래된 순환이 남아 겹치지 않고, 순환 수명도 계속 갱신된다.
@@ -77,6 +81,7 @@ jobs:
           BASE_URL: ${{ vars.DASHBOARD_BASE_URL }}
           COLLECT_SECRET: ${{ secrets.COLLECT_SECRET }}
           FIRST_SCOPE: ${{ github.event_name == 'workflow_dispatch' && inputs.scope || (github.event.schedule == '20 */6 * * *' && 'all' || 'realtime') }}
+          RUN_MINUTES: ${{ inputs.minutes }}
         run: |
           set -uo pipefail
 
@@ -99,7 +104,11 @@ jobs:
           # 겹쳐 이전 기준을 받을 수 있다.
           OFFSET=60
           # 350분 상한 안에서 끝내고 다음 점화에 넘긴다.
-          DEADLINE=$(( $(date +%s) + 330 * 60 ))
+          # 기본 330분. 점화 연결을 시험할 때만 workflow_dispatch 로 줄여 부른다.
+          LIFE_MINUTES="${RUN_MINUTES:-}"
+          case "$LIFE_MINUTES" in ''|*[!0-9]*|0) LIFE_MINUTES=330 ;; esac
+          [ "$LIFE_MINUTES" -gt 350 ] && LIFE_MINUTES=330
+          DEADLINE=$(( $(date +%s) + LIFE_MINUTES * 60 ))
           # 일간·주간·월간까지 훑는 전수 수집은 6시간에 한 번이면 된다.
           LAST_ALL_HOUR=""
           # 순위 대조 검사는 서점 페이지를 여러 장 여는 일이라 한 시간에 한 번.
