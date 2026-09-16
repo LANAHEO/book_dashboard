@@ -3596,6 +3596,38 @@ async function refreshStandardSources() {
 let snapshotRebuild = null;
 let snapshotRebuildForced = null;
 
+// 서점을 마지막으로 들여다본 시각. 스냅샷과 따로 남긴다.
+//
+// 스냅샷은 순위가 바뀌었을 때만 다시 쓴다(바꾸지 않으면 ▲▼ 비교 기준이 방금으로
+// 당겨진다). 그래서 조용한 시간에는 5분마다 확인하고 있어도 화면의 시각이 멈춰
+// 있고, 그게 수집이 죽은 것처럼 보였다 — 실제로 여러 번 그렇게 오해했다.
+//
+// 이 값은 확인할 때마다 갱신되므로 "지금도 보고 있다"를 화면이 말할 수 있다.
+const COLLECT_HEARTBEAT_ID = "collect-heartbeat";
+
+async function writeCollectHeartbeat() {
+  try {
+    await writePersistedSource(
+      COLLECT_HEARTBEAT_ID,
+      { items: [], checkedAt: new Date().toISOString() },
+      Date.now() + 7 * 24 * 60 * 60 * 1000
+    );
+  } catch (error) {
+    // 심장 박동을 못 남긴 것으로 수집을 실패시키지 않는다.
+    console.error("[collect] heartbeat write failed:", error);
+  }
+}
+
+async function readCollectHeartbeat() {
+  try {
+    const entry = await readPersistedSource(COLLECT_HEARTBEAT_ID);
+
+    return (entry && entry.payload && entry.payload.checkedAt) || "";
+  } catch (error) {
+    return "";
+  }
+}
+
 // Refreshing sources is not enough: the snapshot every visitor reads is only
 // written by buildDashboard, so without this the dashboard stays frozen at the
 // last forced refresh while the source rows keep moving underneath it.
@@ -3709,7 +3741,10 @@ async function handleRequest(request, response) {
 
     if (!forceIds.length) {
       try {
-        const snapshot = await readDashboardSnapshot();
+        const [snapshot, lastCheckedAt] = await Promise.all([
+          readDashboardSnapshot(),
+          readCollectHeartbeat()
+        ]);
         if (snapshot && snapshot.payload && Array.isArray(snapshot.payload.sections)) {
           jsonResponse(
             response,
@@ -3717,7 +3752,8 @@ async function handleRequest(request, response) {
             {
               ...snapshot.payload,
               cacheState: snapshot.source || "snapshot",
-              snapshotUpdatedAt: snapshot.updatedAt
+              snapshotUpdatedAt: snapshot.updatedAt,
+              lastCheckedAt
             },
             SNAPSHOT_CACHE_CONTROL
           );
@@ -3891,6 +3927,9 @@ async function handleRequest(request, response) {
         // 아무 서점도 안 바뀌었으면 여기서 끝낸다. 나머지를 다시 긁어 봐야 같은
         // 값이고, 스냅샷을 다시 쓰면 ▲▼ 의 비교 기준이 방금으로 당겨진다.
         if (!changedStores.size && url.searchParams.get("force") !== "1") {
+          // 건너뛸 때야말로 남겨야 한다. 이 길로 끝나면 스냅샷을 안 쓰므로,
+          // 이 기록이 없으면 화면에는 확인한 흔적이 하나도 남지 않는다.
+          await writeCollectHeartbeat();
           jsonResponse(response, 200, {
             ok: true,
             scope,
@@ -3910,6 +3949,7 @@ async function handleRequest(request, response) {
         );
       }
 
+      await writeCollectHeartbeat();
       const payload = await rebuildDashboardSnapshot(`collect:${scope}`);
       // 저장에 실패했으면 수집은 실패한 것이다. 만들어 놓고 못 남겼으면 다음
       // 요청부터는 예전 값이 나가므로, 부른 쪽(크론)에 성공이라고 말하면 안 된다.

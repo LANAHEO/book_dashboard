@@ -36,7 +36,8 @@ const elements = {
   viewNav: document.querySelector(".view-nav"),
   collectStatus: document.getElementById("collect-status"),
   autoRefreshBadge: document.getElementById("auto-refresh-badge"),
-  autoRefreshText: document.getElementById("auto-refresh-text")
+  autoRefreshText: document.getElementById("auto-refresh-text"),
+  lastChecked: document.getElementById("last-checked")
 };
 
 const BADGE_IDLE_FALLBACK = "자동 갱신 준비 중";
@@ -1689,6 +1690,32 @@ function formatClock(value) {
   }).format(at);
 }
 
+// "마지막 수집" 밑에 "마지막 확인"을 적는다.
+//
+// 위의 시각은 순위가 마지막으로 바뀐 때다. 서점이 한동안 안 바꾸면 그 시각은
+// 멈춰 있는데, 그걸 보고 수집이 죽었다고 읽게 된다. 실제로는 5분마다 들여다보고
+// "바뀐 게 없다"를 확인하고 있다. 그 사실을 적어야 화면만 보고도 알 수 있다.
+function renderLastChecked() {
+  const el = elements.lastChecked;
+
+  if (!el) {
+    return;
+  }
+
+  const checked = state.dashboard && state.dashboard.lastCheckedAt;
+  const at = checked ? Date.parse(checked) : NaN;
+
+  if (!Number.isFinite(at)) {
+    el.textContent = "서점별 수집 시점은 아래 표에 있습니다";
+    return;
+  }
+
+  const minutes = Math.max(0, Math.round((Date.now() - at) / 60000));
+  const when = minutes < 1 ? "방금" : `${minutes}분 전`;
+
+  el.textContent = `서점 확인 ${when} · 바뀐 것이 있을 때만 위 시각이 바뀝니다`;
+}
+
 // 상단에 우리 갱신 주기만 적혀 있으면 그 숫자가 순위의 기준인지 우리가 긁은 시각인지
 // 구분되지 않는다. 서점이 밝힌 기준 시점을 먼저 보여 주고, 우리 수집 시각은 그 뒤에
 // 부차적으로 적는다 — 사용자가 알고 싶은 것은 "이 순위가 언제 것이냐"다.
@@ -1803,6 +1830,7 @@ function renderDashboard() {
   const visibleSections = getVisibleSections(state.dashboard.sections);
 
   elements.generatedAt.textContent = formatDateTime(state.dashboard.generatedAt);
+  renderLastChecked();
   renderStoreStatus();
   renderStoreFilters(state.dashboard.sections);
   elements.dashboard.innerHTML = renderDashboardSections(visibleSections);
