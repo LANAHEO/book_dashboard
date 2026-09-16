@@ -36,7 +36,8 @@ const elements = {
   viewNav: document.querySelector(".view-nav"),
   collectStatus: document.getElementById("collect-status"),
   autoRefreshBadge: document.getElementById("auto-refresh-badge"),
-  autoRefreshText: document.getElementById("auto-refresh-text")
+  autoRefreshText: document.getElementById("auto-refresh-text"),
+  collectNow: document.getElementById("collect-now")
 };
 
 const BADGE_IDLE_FALLBACK = "자동 갱신 준비 중";
@@ -1939,6 +1940,7 @@ function findSwipeSwitcher(track) {
 function setLoading(loading) {
   state.loading = loading;
   elements.dashboard.setAttribute("aria-busy", loading ? "true" : "false");
+  updateCollectNowButton();
 
   if (loading) {
     elements.summaryText.textContent = "데이터를 새로 수집하는 중입니다.";
@@ -1995,6 +1997,46 @@ async function loadDashboard(refresh = "") {
   }
 }
 
+// "지금 수집" 단추.
+//
+// 자동 수집이 드물게 한두 시간 비는 일이 있다. 그때 기다리지 않고 손으로 당겨
+// 받을 수 있게 둔다. scope=realtime 인 이유는 비는 구간에서 낡는 것이 실시간
+// 순위이기 때문이다 — 주간·일간은 원래 6시간에 한 번이라 한두 시간 빈다고
+// 달라지지 않는다. 전수로 부르면 2분 넘게 걸려 단추로는 쓰기 어렵다.
+//
+// 이 요청은 서점 60여 곳을 다시 긁는 일이라 연타를 막는다. 받는 동안은 잠그고,
+// 끝난 뒤에도 잠시 잠가 둔다.
+const COLLECT_NOW_COOLDOWN_MS = 60_000;
+let collectNowUntil = 0;
+
+function updateCollectNowButton() {
+  const button = elements.collectNow;
+
+  if (!button) {
+    return;
+  }
+
+  const waiting = Date.now() < collectNowUntil;
+  button.disabled = state.loading || waiting;
+  button.textContent = state.loading ? "수집 중…" : waiting ? "잠시 후 가능" : "지금 수집";
+}
+
+async function collectNow() {
+  if (state.loading || Date.now() < collectNowUntil) {
+    return;
+  }
+
+  collectNowUntil = Date.now() + COLLECT_NOW_COOLDOWN_MS;
+  updateCollectNowButton();
+
+  try {
+    await loadDashboard("realtime");
+  } finally {
+    updateCollectNowButton();
+    window.setTimeout(updateCollectNowButton, COLLECT_NOW_COOLDOWN_MS);
+  }
+}
+
 // 화면을 열어 둔 동안에도 값이 따라가야 한다. 예전에는 목록의 nextRefreshAt
 // (수집 시각 + 캐시 수명)에서 가장 이른 것을 기다렸는데, 실시간 캐시 수명이
 // 60분이라 화면은 한 시간에 한 번만 다시 받았다. 수집은 5분마다 하고 있었으니
@@ -2043,6 +2085,8 @@ function watchTabReturn() {
 }
 
 function bindEvents() {
+  elements.collectNow?.addEventListener("click", collectNow);
+
   elements.viewNav?.addEventListener("click", (event) => {
     const button = event.target.closest("[data-view]");
     if (!button || button.dataset.view === state.activeView) {
