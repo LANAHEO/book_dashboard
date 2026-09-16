@@ -55,9 +55,18 @@ concurrency:
 jobs:
   collect:
     runs-on: ubuntu-latest
-    # GitHub 작업 상한이 360분이다. 그 앞에서 스스로 끝내고 다음 점화를 기다린다.
+    # GitHub 작업 상한이 360분이다. 그 앞에서 스스로 끝내고 다음 순환을 띄운다.
     timeout-minutes: 350
+    # 마지막 단계가 다음 순환을 띄우려면 actions 쓰기 권한이 있어야 한다.
+    permissions:
+      contents: read
+      actions: write
     steps:
+      # 순환이 너무 빨리 끝났을 때 곧바로 다음 것을 띄우면 분당 한 번씩 도는
+      # 수가 있다. 시작 시각을 적어 두고 마지막 단계에서 간격을 맞춘다.
+      - name: 시작 시각 기록
+        run: date +%s > "$RUNNER_TEMP/started_at"
+
       # 검사기를 쓰려면 리포가 있어야 한다. 수집 자체는 curl 한 줄이라 필요 없지만,
       # 순위가 서점과 어긋나는 일이 세 번 반복됐고 세 번 다 원인이 달랐다 —
       # 사람이 눈으로 보고 알아채기를 기다리지 않는다.
@@ -208,3 +217,38 @@ jobs:
             echo "$problems" >&2
             exit 1
           fi
+
+      # 다음 순환을 스스로 띄운다.
+      #
+      # 예약만 믿을 수 없어서다. 이 리포에서 실제로 세어 보니 `*/15`(하루 96회)가
+      # 하루 9.7회만 떴고, 가장 크게 벌어진 간격이 471분이었다. 한 순환이 330분을
+      # 사는데 점화가 471분 만에 오면 그 사이 두 시간 넘게 아무도 모으지 않는다.
+      # 화면에는 "실시간 5분"이라고 적혀 있는데 실제로는 두 시간이 비는 것이다.
+      #
+      # GITHUB_TOKEN 으로 띄운 이벤트는 보통 새 실행을 만들지 않지만,
+      # workflow_dispatch 와 repository_dispatch 는 그 규칙의 예외다.
+      #
+      # 취소됐을 때는 띄우지 않는다. 취소는 곧 새 실행이 이미 올라왔다는 뜻이라,
+      # 여기서 또 띄우면 서로 취소하며 주고받는다.
+      - name: 다음 순환 점화
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+
+          # 무슨 이유로든 순환이 일찍 끝났으면, 다음 것을 띄우기 전에 그만큼
+          # 기다린다. 실패가 반복돼도 10분에 한 번을 넘지 않는다.
+          MIN_RUN_SECONDS=600
+          started=$(cat "$RUNNER_TEMP/started_at" 2>/dev/null || echo 0)
+          elapsed=$(( $(date +%s) - started ))
+
+          if [ "$started" -gt 0 ] && [ "$elapsed" -lt "$MIN_RUN_SECONDS" ]; then
+            wait_for=$(( MIN_RUN_SECONDS - elapsed ))
+            echo "순환이 ${elapsed}초 만에 끝났다. ${wait_for}초 기다렸다 다음을 띄운다."
+            sleep "$wait_for"
+          fi
+
+          gh workflow run collect.yml --ref "${{ github.ref_name }}" -f scope=realtime \
+            && echo "다음 순환을 띄웠다." \
+            || echo "다음 순환을 띄우지 못했다. 예약이 대신 켠다." >&2
