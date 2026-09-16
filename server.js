@@ -3352,12 +3352,22 @@ function getForcedSourceIds(refreshParam) {
   return [];
 }
 
-// 스냅샷은 수집이 돌 때만 바뀌므로(실시간 60분, 일반 6시간) CDN이 들고 있어도 된다.
-// no-store로 막아 두면 방문할 때마다 함수를 깨우고 Supabase까지 다녀와서 2.6초가 든다.
-// max-age=0으로 브라우저는 매번 확인하게 두고, s-maxage로 CDN이 60초간 그대로 내주며,
-// stale-while-revalidate 덕에 그 뒤로도 먼저 보여 주고 뒤에서 새로 받는다.
+// CDN이 잠깐 들고 있는 것은 괜찮다. no-store로 막으면 방문할 때마다 함수를 깨우고
+// Supabase까지 다녀와서 2.6초가 든다.
+//
+// 다만 stale-while-revalidate 를 600초로 두고 있었는데, 그건 CDN이 최대 10분 지난
+// 응답을 그대로 내줘도 된다는 뜻이다. 혼자 볼 때는 티가 안 났지만 여러 사람이 볼 때는
+// 누군가가 10분 묵은 순위를 본다. 실제로 측정에서 Age 250초(4분 지난 답)가 나왔다.
+// 수집은 5분 주기이므로 CDN이 들고 있어도 될 시간은 그보다 훨씬 짧아야 한다.
 const SNAPSHOT_CACHE_CONTROL =
-  "public, max-age=0, s-maxage=60, stale-while-revalidate=600";
+  "public, max-age=0, s-maxage=30, stale-while-revalidate=30";
+
+// 갱신을 요청한 응답은 절대 캐시하지 않는다.
+//
+// 이게 없어서 ?refresh=quick 이 CDN에 걸렸다. 화면이 열릴 때마다 서점을 확인하라고
+// 만든 길인데, 두 번째 방문자부터는 CDN이 예전 응답을 0.1초에 돌려주고 확인은
+// 아예 돌지 않았다. 동시에 연 네 명이 모두 같은 옛날 값을 받았다.
+const NO_CACHE_CONTROL = "no-store";
 
 // 분야 목록은 대시보드 스냅샷보다 더 오래 들고 있어도 된다. 실시간이 60분,
 // 일반이 6시간마다 수집되므로 5분은 한참 짧다. 이걸 60초로 두면 분야를 처음
@@ -3567,22 +3577,43 @@ async function lastKnownFingerprint(id) {
 // 견주고, 바뀐 서점의 목록만 다시 받는다. 아무 데도 안 바뀌었으면 요청 세 번으로
 // 끝난다. 가리지 않고 실시간 전부를 받으면 예순 개가 넘어 90초가 걸리고,
 // 그렇게 몰아치면 알라딘이 403 으로 막는다.
-async function collectRealtimeOnce(options = {}) {
-  const probe = await probeRealtimeSources();
-  const changedStores = new Set(
-    probe.results.filter((entry) => entry.changed && entry.storeId).map((e) => e.storeId)
-  );
+// 이 대시보드는 여러 사람이 같이 본다. 열 때마다 확인하도록 해 뒀으니, 네 명이
+// 동시에 열면 서점 요청도 네 배가 된다. 알라딘이 403으로 막았던 것이 이런 몰아침
+// 때문이었다. 이미 돌고 있는 확인이 있으면 새로 찌르지 않고 그 결과를 같이 쓴다.
+let realtimeCollection = null;
 
-  if (!changedStores.size && !options.force) {
-    return { probe, changed: false };
+function collectRealtimeOnce(options = {}) {
+  if (realtimeCollection && !options.force) {
+    return realtimeCollection;
   }
 
-  await refreshRealtimeSources(
-    new Set(REALTIME_PROBE_IDS),
-    changedStores.size ? changedStores : null
-  );
+  const run = (async () => {
+    const probe = await probeRealtimeSources();
+    const changedStores = new Set(
+      probe.results.filter((entry) => entry.changed && entry.storeId).map((e) => e.storeId)
+    );
 
-  return { probe, changed: true };
+    if (!changedStores.size && !options.force) {
+      return { probe, changed: false };
+    }
+
+    await refreshRealtimeSources(
+      new Set(REALTIME_PROBE_IDS),
+      changedStores.size ? changedStores : null
+    );
+
+    return { probe, changed: true };
+  })();
+
+  realtimeCollection = run;
+
+  // 실패했든 성공했든 자리를 비워야 다음 확인이 돈다. 비우지 않으면 한 번 실패한
+  // 약속을 계속 돌려주게 된다.
+  return run.finally(() => {
+    if (realtimeCollection === run) {
+      realtimeCollection = null;
+    }
+  });
 }
 
 async function probeRealtimeSources() {
@@ -3812,7 +3843,7 @@ async function handleRequest(request, response) {
               snapshotUpdatedAt: snapshot.updatedAt,
               lastCheckedAt
             },
-            SNAPSHOT_CACHE_CONTROL
+            refreshParam ? NO_CACHE_CONTROL : SNAPSHOT_CACHE_CONTROL
           );
           return;
         }
