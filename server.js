@@ -3360,6 +3360,17 @@ const SNAPSHOT_CACHE_CONTROL =
 const LIST_CACHE_CONTROL =
   "public, max-age=30, s-maxage=300, stale-while-revalidate=3600";
 
+// HTML 은 스냅샷과 같은 정책을 쓰면 안 된다. 이 문서 안에는 첫 화면용 데이터가
+// 통째로 박혀 있어서, CDN 이 들고 있는 시간이 곧 "첫 화면이 옛날 값으로 그려지는
+// 시간"이 된다. 스냅샷 정책(stale-while-revalidate=600)을 그대로 쓰던 동안
+// 주요 도서를 바꿔도 최대 11분간 옛 순서가 먼저 떴다 — 수집도 저장도 멀쩡한데
+// 화면만 안 바뀌는 것으로 보였다.
+//
+// 30초 + 되살림 60초면 아무리 밀려도 1분 반이다. 함수 콜드 스타트(2.6초)를
+// 피하려던 원래 목적은 그대로 지킨다.
+const PAGE_CACHE_CONTROL =
+  "public, max-age=0, s-maxage=30, stale-while-revalidate=60";
+
 function jsonResponse(response, statusCode, payload, cacheControl = "no-store") {
   response.writeHead(statusCode, {
     "content-type": "application/json; charset=utf-8",
@@ -3447,7 +3458,7 @@ async function serveDashboardPage(response) {
 
   response.writeHead(200, {
     "content-type": "text/html; charset=utf-8",
-    "cache-control": SNAPSHOT_CACHE_CONTROL
+    "cache-control": PAGE_CACHE_CONTROL
   });
   response.end(html);
 }
