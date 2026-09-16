@@ -736,32 +736,6 @@ body {
   font-weight: 600;
 }
 
-/* "지금 수집". 자동 수집이 비었을 때 손으로 당겨 받는 단추라, 평소에는 눈에
-   띄지 않게 두고 누를 수 있다는 것만 알린다 — 이 화면에서 색을 쓰는 곳은
-   순위와 주요 도서 표시뿐이다. */
-.collect-now {
-  justify-self: start;
-  margin-top: 10px;
-  padding: 5px 11px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: var(--surface);
-  color: var(--muted-strong);
-  font: inherit;
-  font-size: 11px;
-  font-weight: 700;
-  cursor: pointer;
-}
-
-.collect-now:hover:not(:disabled) {
-  border-color: var(--ink);
-  color: var(--ink);
-}
-
-.collect-now:disabled {
-  color: var(--stone);
-  cursor: default;
-}
 
 .panel-meta span + span::before {
   content: "";
