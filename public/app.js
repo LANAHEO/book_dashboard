@@ -2018,7 +2018,13 @@ function updateCollectNowButton() {
 
   const waiting = Date.now() < collectNowUntil;
   button.disabled = state.loading || waiting;
-  button.textContent = state.loading ? "수집 중…" : waiting ? "잠시 후 가능" : "지금 수집";
+  // 서점 60여 곳을 다시 긁는 일이라 실측 98초가 걸린다. 걸리는 시간을 적어 두지
+  // 않으면 멈춘 것으로 보고 새로고침하게 된다.
+  button.textContent = state.loading
+    ? "수집 중… 1~2분"
+    : waiting
+      ? "잠시 후 가능"
+      : "지금 수집";
 }
 
 async function collectNow() {
