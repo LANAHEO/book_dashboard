@@ -18,11 +18,11 @@
 //   node scripts/check-ranks.js --books 8              # 확인할 도서 수
 // 종료 코드:
 //   0  고정 목록이 서점과 일치하고, 데이터도 제 주기 안이다
-//   1  고정 목록이 서점과 어긋난다 — 버그다. 수집을 멈춰야 한다
+//   1  방금 가져온 값인데도 서점과 어긋난다 — 버그다. 수집을 멈춰야 한다
 //      (한 번 어긋난 것만으로는 판정하지 않는다. 페이지를 새로 받아 두 번 다
-//       어긋나야 1이다 — 서점이 한 번 이상한 쪽을 내주는 일이 실제로 있었다)
+//       어긋나야 하고, 우리 값이 FRESH_LIMIT_MINUTES 안에 들어온 것이어야 한다)
 //   2  검사 자체가 실패했다 (네트워크·파싱)
-//   3  값은 맞지만 데이터가 묵었다 — 경고다. 수집을 멈추면 안 된다
+//   3  데이터가 묵었거나, 묵은 값이 서점과 어긋난다 — 경고다. 수집을 멈추면 안 된다
 //
 // 3을 1과 나눠 둔 이유: 묵음은 "수집이 멈췄다"는 *증상*이다. 그걸로 수집
 // 루프를 죽이면, 한 번 멈춘 수집이 스스로 되살아날 수 없는 교착이 된다.
@@ -43,6 +43,14 @@ const BASE = String(arg("--base", process.env.DASHBOARD_BASE_URL || DEFAULT_BASE
   ""
 );
 const BOOK_LIMIT = Number(arg("--books", 6));
+
+// 어긋난 순위를 "버그"로 부를 수 있는 우리 값의 나이 한계.
+//
+// 이 검사는 주간·일간이 하루 단위로 고정이라는 전제로 만들어졌는데, 알라딘 주간
+// 베스트는 하루 중에도 움직인다. 표준 목록은 6시간에 한 번 모으므로 대부분의
+// 시간에는 우리 값이 몇 시간씩 묵어 있고, 그 상태로 견주면 움직인 목록이 전부
+// 불일치로 찍힌다. 그건 파서가 틀린 것과 구분되지 않는다.
+const FRESH_LIMIT_MINUTES = Number(arg("--fresh", 60));
 
 // 제목은 서점마다 &amp; 같은 기호와 공백이 다르게 들어온다. 그 차이로 "불일치"를
 // 만들면 진짜 불일치가 묻힌다.
@@ -148,6 +156,8 @@ async function storeRanks(list, options = {}) {
 
   const fixedProblems = [];
   const realtimeDrift = [];
+  // 우리 값이 묵어서 어긋난 것으로 보이는 건. 버그로 치지 않고 참고로만 적는다.
+  const staleDrift = [];
   // 고정 목록이 어긋난 건. 서점 페이지를 새로 받아 한 번 더 확인한 뒤에 판정한다.
   const suspects = [];
   // 같은 목록을 의심 건마다 다시 받지 않는다 — 서점을 두들기지 않기 위해서다.
@@ -217,7 +227,25 @@ async function storeRanks(list, options = {}) {
       continue;
     }
 
-    fixedProblems.push(`${s.where} → ${verdict}`);
+    // 두 번 다 어긋났다. 그래도 우리 값이 묵었으면 "틀렸다"고 말할 수 없다.
+    //
+    // 주간·일간은 하루 단위로 고정이라고 보고 이 검사를 만들었는데, 알라딘의
+    // 주간 베스트는 하루 중에도 움직인다. 실제로 137분 묵은 값으로 견주자
+    // 문해내공 21→23, 옥스브리지 26→33 으로 어긋났고, 검사는 이것을 버그로
+    // 보고 수집 루프를 멈췄다. 바로 뒤 수집에서 우리 값은 23·33 으로 서점과
+    // 정확히 같아졌다 — 파서가 아니라 우리 값이 낡았던 것이다.
+    //
+    // 그래서 "우리가 방금 가져온 값인데도 다르다"일 때만 버그로 친다. 움직이는
+    // 목록과 낡은 값의 차이는 이 검사로 가릴 수 없는 종류의 차이다.
+    const ours = Date.parse(s.list.updatedAt || "");
+    const ageMin = Number.isFinite(ours) ? Math.round((Date.now() - ours) / 60000) : Infinity;
+
+    if (ageMin > FRESH_LIMIT_MINUTES) {
+      staleDrift.push(`${s.where} → ${verdict} (우리 값 ${ageMin}분 전)`);
+      continue;
+    }
+
+    fixedProblems.push(`${s.where} → ${verdict} (우리 값 ${ageMin}분 전)`);
   }
 
   // ── 우리 데이터가 얼마나 묵었나 ─────────────────────────────────────
@@ -273,6 +301,7 @@ async function storeRanks(list, options = {}) {
   console.log("");
 
   console.log(`고정 목록(주간·일간·분야) 일치 ${fixedOk}건 · 불일치 ${fixedProblems.length}건`);
+  console.log(`묵은 값과의 차이 ${staleDrift.length}건 (${FRESH_LIMIT_MINUTES}분 넘은 우리 값)`);
   console.log(`실시간 시차 ${realtimeDrift.length}건 (서점이 계속 바꾸는 값이라 정상)`);
   console.log(`확인 못 함 ${skipped}건 (교보는 목록을 HTML로 주지 않음)`);
 
@@ -286,6 +315,12 @@ async function storeRanks(list, options = {}) {
     console.log("\n고정 목록 불일치 — 이건 버그다:");
     fixedProblems.forEach((n) => console.log(`  ${n}`));
     process.exit(1);
+  }
+
+  if (staleDrift.length) {
+    console.log("\n묵은 값과 어긋난다 — 다음 수집에서 맞춰질 값이다 (경고, 수집은 계속한다):");
+    staleDrift.forEach((n) => console.log(`  ${n}`));
+    process.exit(3);
   }
 
   if (lagProblems.length) {
