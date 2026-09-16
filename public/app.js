@@ -1024,14 +1024,17 @@ function renderCollectLag(group) {
   // updatedAt 은 값이 바뀌었을 때만 움직이므로, 같은 값을 다시 긁어도 늘지 않는다.
   const minutes = Math.max(0, Math.round((ours - storeAt) / 60000));
 
-  // 한 시간을 넘으면 그건 우리가 늦은 게 아니라 서점이 아직 새 기준을 안 올린
-  // 것이다. 실시간 기준은 매시 갈리고 우리는 5분마다 들여다보므로, 우리 때문에
-  // 생길 수 있는 지연은 아무리 나빠도 한 시간을 넘지 못한다.
+  // 우리가 늦어서 생길 수 있는 지연의 한계는 "우리 확인 주기"다.
   //
-  // 예스24가 14:02 에도 13:00 기준을 내주고 있어 이 칸이 62분으로 빨갛게 떴다.
+  // 5분마다 들여다보므로, 서점이 13:00 기준을 13:00 에 올렸다면 우리는 늦어도
+  // 13:05 에는 그것을 집는다. 그런데 14:02 에 집었다면 서점이 13:00 기준을
+  // 14시 가까이 되어서야 내주기 시작했다는 뜻이다 — 우리가 늦은 게 아니다.
+  //
+  // 처음에는 한 시간을 기준으로 뒀는데 예스24가 51분으로 떠서 그대로 빨갰다.
   // 우리가 더 자주 가져와도 줄지 않는 숫자를 경고색으로 칠하면, 정작 우리가
-  // 늦었을 때 그 색을 믿지 않게 된다.
-  const storeBehind = minutes >= 60;
+  // 늦었을 때 그 색을 아무도 믿지 않는다.
+  const cycle = collectIntervalMs() / 60000;
+  const storeBehind = minutes > Math.max(cycle * 2, 10);
   const over = !storeBehind && minutes > COLLECT_LAG_LIMIT_MINUTES;
   const hint = storeBehind
     ? `이 서점은 아직 ${group.sourceStamp} 기준을 최신으로 내주고 있습니다. 우리가 더 자주 가져와도 줄지 않는 차이입니다.`
