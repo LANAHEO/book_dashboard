@@ -1714,10 +1714,17 @@ function renderStoreStatus() {
           const cadence = group.cadence
             ? `<span class="cs-cadence">${escapeHtml(group.cadence)}</span>`
             : "";
-          const collected = formatClock(group.collectedAt);
-          // 예정 시각보다 "마지막으로 서점을 열어 본 시각"이 쓸모 있다. 값이 그대로면
-          // 위의 수집 시각은 움직이지 않으므로, 수집이 돌고 있다는 것은 이 줄이 말해 준다.
-          const checked = formatClock(group.checkedAt);
+          // 이 칸에서 사람이 기대하는 것은 "마지막으로 가져온 시각"이다. 값이 바뀐
+          // 시각을 여기 적었더니, 교보 주간처럼 한 주 내내 같은 목록은 "9월 10일"이
+          // 찍혀서 엿새째 수집이 죽은 것처럼 보였다 — 실제로는 매 주기 가져와
+          // 서점과 똑같은 값을 받고 있었다.
+          //
+          // 그래서 가져온 시각을 앞에 놓고, 값이 바뀐 시각은 다를 때만 아래에
+          // 덧붙인다. 두 값이 다르다는 것은 "그 뒤로 서점이 안 바꿨다"는 뜻이지
+          // 수집이 멈췄다는 뜻이 아니다.
+          const collected = formatClock(group.checkedAt) || formatClock(group.collectedAt);
+          const changedAt = formatClock(group.collectedAt);
+          const changed = changedAt && changedAt !== collected ? changedAt : "";
           const flag = group.error
             ? '<span class="cs-flag cs-flag-error">수집 실패</span>'
             : group.stale
@@ -1730,7 +1737,7 @@ function renderStoreStatus() {
               <td class="cs-basis-cell">${basis}${cadence}</td>
               <td class="cs-collected">
                 <span>${escapeHtml(collected || "-")}</span>
-                ${checked ? `<span class="cs-next">마지막 확인 ${escapeHtml(checked)}</span>` : ""}
+                ${changed ? `<span class="cs-next">값 갱신 ${escapeHtml(changed)}</span>` : ""}
               </td>
               <td class="cs-lag">${renderCollectLag(group)}</td>
             </tr>
