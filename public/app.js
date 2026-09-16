@@ -1023,14 +1023,28 @@ function renderCollectLag(group) {
   // 서점이 이 기준을 올린 뒤 우리가 그것을 집어 오기까지 걸린 시간.
   // updatedAt 은 값이 바뀌었을 때만 움직이므로, 같은 값을 다시 긁어도 늘지 않는다.
   const minutes = Math.max(0, Math.round((ours - storeAt) / 60000));
-  const over = minutes > COLLECT_LAG_LIMIT_MINUTES;
-  const hint = over
-    ? `서점이 ${group.sourceStamp} 기준을 올린 뒤 ${minutes}분 만에 가져왔습니다.`
-    : `서점이 ${group.sourceStamp} 기준을 올린 직후(${minutes}분)에 가져왔습니다.`;
 
-  return `<span class="cs-lag-value${over ? " is-over" : " is-ok"}" title="${escapeHtml(
-    hint
-  )}">${escapeHtml(minutes)}분</span>`;
+  // 한 시간을 넘으면 그건 우리가 늦은 게 아니라 서점이 아직 새 기준을 안 올린
+  // 것이다. 실시간 기준은 매시 갈리고 우리는 5분마다 들여다보므로, 우리 때문에
+  // 생길 수 있는 지연은 아무리 나빠도 한 시간을 넘지 못한다.
+  //
+  // 예스24가 14:02 에도 13:00 기준을 내주고 있어 이 칸이 62분으로 빨갛게 떴다.
+  // 우리가 더 자주 가져와도 줄지 않는 숫자를 경고색으로 칠하면, 정작 우리가
+  // 늦었을 때 그 색을 믿지 않게 된다.
+  const storeBehind = minutes >= 60;
+  const over = !storeBehind && minutes > COLLECT_LAG_LIMIT_MINUTES;
+  const hint = storeBehind
+    ? `이 서점은 아직 ${group.sourceStamp} 기준을 최신으로 내주고 있습니다. 우리가 더 자주 가져와도 줄지 않는 차이입니다.`
+    : over
+      ? `서점이 ${group.sourceStamp} 기준을 올린 뒤 ${minutes}분 만에 가져왔습니다.`
+      : `서점이 ${group.sourceStamp} 기준을 올린 직후(${minutes}분)에 가져왔습니다.`;
+
+  // 서점이 늦은 경우는 색을 빼고 "서점 기준"이라고 적는다. 숫자만 회색으로
+  // 두면 무슨 뜻인지 알 수 없다.
+  const tone = storeBehind ? " is-store" : over ? " is-over" : " is-ok";
+  const text = storeBehind ? `서점 ${minutes}분` : `${minutes}분`;
+
+  return `<span class="cs-lag-value${tone}" title="${escapeHtml(hint)}">${escapeHtml(text)}</span>`;
 }
 
 function renderSourceBasis(list) {

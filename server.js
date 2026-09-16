@@ -3536,12 +3536,15 @@ function rankingFingerprint(payload) {
     return `stamp:${payload.sourceStamp}`;
   }
 
-  const top = (payload.items || [])
-    .slice(0, 10)
+  // 목록 전체를 본다. 예전에는 상위 10권만 봤는데, 그러면 11위 아래에서 일어난
+  // 움직임을 "안 바뀌었다"로 읽고 그냥 지나간다. 기준 시각을 안 적는 서점(알라딘)은
+  // 이 값이 유일한 신호라, 그동안 알라딘 실시간만 화면과 서점이 1~4위씩 어긋났다
+  // — 26위인 책이 우리 화면에는 30위로 남아 있는 식이었다.
+  const ranks = (payload.items || [])
     .map((item) => `${item.rank}:${item.title}`)
     .join("|");
 
-  return top ? `top:${top}` : "";
+  return ranks ? `ranks:${ranks}` : "";
 }
 
 // 직전 값은 다시 가져오지 않고 읽기만 한다. 서버리스는 요청마다 메모리가 비어

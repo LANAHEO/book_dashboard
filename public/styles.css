@@ -2680,6 +2680,14 @@ a.focus-chip:hover {
   color: var(--danger);
 }
 
+/* 서점이 아직 옛 기준을 내주고 있는 경우. 우리가 고칠 수 있는 일이 아니므로
+   경고색을 주지 않는다 — 우리 잘못이 아닌 것을 빨갛게 칠하면, 정작 우리가
+   늦었을 때 그 색을 아무도 믿지 않는다. */
+.cs-lag-value.is-store {
+  color: var(--stone);
+  font-weight: 600;
+}
+
 .cs-lag-na {
   color: var(--stone);
 }
