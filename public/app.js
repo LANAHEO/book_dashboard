@@ -2034,10 +2034,6 @@ async function loadDashboard(refresh = "") {
     } else {
       state.hasLoadedOnce = true;
       showIdleBadge();
-      // 첫 그림은 저장된 순위표로 즉시 띄우고, 그 직후에 서점을 확인한다.
-      // 열자마자 몇 초 빈 화면을 보는 것보다, 바로 보여 주고 몇 초 뒤에
-      // 최신으로 갈아 끼우는 편이 낫다.
-      window.setTimeout(() => loadDashboard("quick"), 0);
     }
   } catch (error) {
     // 한 번 실패했다고 화면을 비우지 않는다. 그 순간 보이던 값은 방금까지 맞던
@@ -2213,7 +2209,14 @@ function start() {
     showIdleBadge();
   }
 
-  loadDashboard();
+  // 저장된 순위표로 먼저 그리고, 그다음에 서점을 확인한다.
+  //
+  // 확인을 loadDashboard 안의 "첫 로드" 분기에 걸어 뒀더니 한 번도 실행되지
+  // 않았다. 위에서 부트스트랩으로 그리면서 hasLoadedOnce 를 이미 켜 버리기
+  // 때문이다. 열릴 때 확인하는 일은 여는 쪽에서 직접 시키는 것이 맞다.
+  //
+  // loadDashboard 는 실패해도 예외를 던지지 않으므로 뒤의 확인은 언제나 돈다.
+  loadDashboard().then(() => loadDashboard("quick"));
 }
 
 start();
