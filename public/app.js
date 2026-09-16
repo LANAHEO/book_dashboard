@@ -1977,7 +1977,6 @@ async function loadDashboard(refresh = "") {
     state.assetVersion = payload.assetVersion || "";
     state.dashboard = payload;
     renderDashboard();
-    scheduleDashboardRefresh();
     if (state.hasLoadedOnce) {
       showUpdatedBadge();
     } else {
@@ -1985,13 +1984,27 @@ async function loadDashboard(refresh = "") {
       showIdleBadge();
     }
   } catch (error) {
-    elements.dashboard.innerHTML =
-      `<div class="panel-empty">대시보드를 불러오지 못했습니다.<br>${escapeHtml(error.message)}</div>`;
-    elements.generatedAt.textContent = "불러오기 실패";
-    elements.summaryText.textContent = "서버 응답을 확인해 주세요.";
-    setAutoRefreshBadge("자동 갱신 상태를 확인해 주세요", "error");
+    // 한 번 실패했다고 화면을 비우지 않는다. 그 순간 보이던 값은 방금까지 맞던
+    // 값이고 다음 시도에서 대개 돌아온다. 지우면 잠깐의 통신 오류에 멀쩡한
+    // 순위표가 통째로 사라진다.
+    if (state.hasLoadedOnce) {
+      setAutoRefreshBadge("자동 갱신 · 다시 시도합니다", "error");
+    } else {
+      elements.dashboard.innerHTML =
+        `<div class="panel-empty">대시보드를 불러오지 못했습니다.<br>${escapeHtml(error.message)}</div>`;
+      elements.generatedAt.textContent = "불러오기 실패";
+      elements.summaryText.textContent = "서버 응답을 확인해 주세요.";
+      setAutoRefreshBadge("자동 갱신 상태를 확인해 주세요", "error");
+    }
   } finally {
     setLoading(false);
+    // 다음 갱신 예약은 성공했을 때만 걸고 있었다. 그래서 한 번이라도 실패하면
+    // 타이머가 영영 다시 걸리지 않아, 서버는 계속 모으는데 열어 둔 화면만
+    // 멈췄다 — 탭을 다른 데 갔다 돌아오기 전에는 복구되지 않았다.
+    //
+    // 수집기에서 배운 것과 같은 규칙이다: 되풀이돼야 하는 일은 한 번 실패로
+    // 끝나면 안 된다. 성공하든 실패하든 다음을 예약한다.
+    scheduleDashboardRefresh();
   }
 }
 
@@ -2008,11 +2021,9 @@ function scheduleDashboardRefresh() {
     state.refreshTimer = null;
   }
 
-  if (!state.dashboard) {
-    return;
-  }
-
-  const delay = Math.max(collectIntervalMs(), 60_000);
+  // 첫 요청부터 실패해 데이터가 아예 없을 때도 예약한다. 예전에는 여기서
+  // 돌아서서, 실패 화면이 스스로 되돌아올 길이 없었다.
+  const delay = state.dashboard ? Math.max(collectIntervalMs(), 60_000) : 30_000;
 
   state.refreshTimer = window.setTimeout(() => {
     loadDashboard();
