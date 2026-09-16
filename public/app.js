@@ -1690,30 +1690,27 @@ function formatClock(value) {
   }).format(at);
 }
 
-// "마지막 수집" 밑에 "마지막 확인"을 적는다.
+// 위 큰 숫자 밑에 "순위가 마지막으로 바뀐 때"를 적는다.
 //
-// 위의 시각은 순위가 마지막으로 바뀐 때다. 서점이 한동안 안 바꾸면 그 시각은
-// 멈춰 있는데, 그걸 보고 수집이 죽었다고 읽게 된다. 실제로는 5분마다 들여다보고
-// "바뀐 게 없다"를 확인하고 있다. 그 사실을 적어야 화면만 보고도 알 수 있다.
-function renderLastChecked() {
+// 두 값은 다르고, 다른 것이 정상이다. 서점을 5분마다 확인해도 서점이 순위를
+// 안 바꾸면 바꿀 것이 없다. 그때 이 줄이 한 시간 전을 가리키는 것은 수집이
+// 멈춘 것이 아니라 서점이 조용했다는 뜻이다.
+function renderRankChanged() {
   const el = elements.lastChecked;
 
   if (!el) {
     return;
   }
 
-  const checked = state.dashboard && state.dashboard.lastCheckedAt;
-  const at = checked ? Date.parse(checked) : NaN;
+  const changed = state.dashboard && state.dashboard.generatedAt;
+  const at = changed ? Date.parse(changed) : NaN;
 
   if (!Number.isFinite(at)) {
     el.textContent = "서점별 수집 시점은 아래 표에 있습니다";
     return;
   }
 
-  const minutes = Math.max(0, Math.round((Date.now() - at) / 60000));
-  const when = minutes < 1 ? "방금" : `${minutes}분 전`;
-
-  el.textContent = `서점 확인 ${when} · 바뀐 것이 있을 때만 위 시각이 바뀝니다`;
+  el.textContent = `순위 변동 ${formatClock(changed)} · 서점별 시점은 아래 표에 있습니다`;
 }
 
 // 상단에 우리 갱신 주기만 적혀 있으면 그 숫자가 순위의 기준인지 우리가 긁은 시각인지
@@ -1829,8 +1826,16 @@ function renderDashboard() {
 
   const visibleSections = getVisibleSections(state.dashboard.sections);
 
-  elements.generatedAt.textContent = formatDateTime(state.dashboard.generatedAt);
-  renderLastChecked();
+  // 맨 위 큰 숫자는 "마지막으로 서점을 확인한 시각"이다.
+  //
+  // 예전에는 순위표를 마지막으로 다시 만든 시각을 적었다. 그건 서점이 순위를
+  // 바꿨을 때만 움직이므로, 조용한 40분이 지나면 40분째 아무것도 안 한 것처럼
+  // 보인다. 오늘 이 숫자 하나 때문에 수집이 멈췄다고 여러 번 읽혔다.
+  // 순위가 언제 바뀌었는지는 바로 아래 줄에 적는다.
+  elements.generatedAt.textContent = formatDateTime(
+    state.dashboard.lastCheckedAt || state.dashboard.generatedAt
+  );
+  renderRankChanged();
   renderStoreStatus();
   renderStoreFilters(state.dashboard.sections);
   elements.dashboard.innerHTML = renderDashboardSections(visibleSections);
