@@ -9,8 +9,7 @@ const state = {
   badgeResetTimer: null,
   hasLoadedOnce: false,
 
-  // 분야별 화면도 주간부터 연다. 교보는 분야별 실시간을 아예 내주지 않아서
-  // 실시간으로 열면 첫 화면이 두 서점짜리가 된다.
+  // 분야별 화면을 처음 열 때의 기간. 이유는 CATEGORY_PERIOD_DEFAULT 참고.
   categoryPeriod: "weekly",
   // 분야는 서점을 가로지르는 묶음 키로 고른다(예: "economy").
   categoryGroup: "",
@@ -85,11 +84,19 @@ const FOCUS_BAR_ROWS = [
 const FOCUS_BAR_SCALE = 100;
 // 기간 순서는 화면 어디서나 같다: 주간 → 일간 → 실시간. 분야별 화면의
 // 기간 단추도 이 순서를 따르고, 첫 단추가 기본값이 된다.
+// 화면에 세우는 순서. 맨 앞이 기본값은 아니다 — 기본값은 아래 CATEGORY_PERIOD_DEFAULT.
 const CATEGORY_PERIODS = [
-  { key: "weekly", label: "주간" },
+  { key: "realtime", label: "실시간" },
   { key: "daily", label: "일간" },
-  { key: "realtime", label: "실시간" }
+  { key: "weekly", label: "주간" }
 ];
+
+// 분야별 화면을 처음 열 때 고를 기간.
+//
+// 순서와 따로 둔다. 예전에는 목록의 첫 칸을 기본값으로 썼는데, 그러면 버튼 순서를
+// 바꾸는 순간 기본값까지 같이 바뀐다. 주간인 데는 이유가 있다 — 교보는 분야별
+// 실시간을 아예 내주지 않아서, 실시간으로 열면 첫 화면이 두 서점짜리가 된다.
+const CATEGORY_PERIOD_DEFAULT = "weekly";
 const VIEW_LABELS = {
   focus: "상상스퀘어 도서 순위",
   weekly: "전체 서점 주간 순위",
@@ -1492,8 +1499,12 @@ function renderCategoryBoard(lists) {
     return "";
   }
 
+  // 이 분야에 지금 고른 기간이 없으면 다른 것으로 바꿔 준다. 기본값(주간)이
+  // 있으면 그걸 쓰고, 그것마저 없는 분야에서만 남은 것 중 첫 번째를 쓴다.
   if (!periods.some((period) => period.key === state.categoryPeriod)) {
-    state.categoryPeriod = periods[0].key;
+    const fallback = periods.find((period) => period.key === CATEGORY_PERIOD_DEFAULT);
+
+    state.categoryPeriod = (fallback || periods[0]).key;
   }
 
   // 교보는 분야별 실시간을 제공하지 않는다. 우리가 종합 실시간 100위를 분야로
