@@ -2264,7 +2264,9 @@ function restoreViewState() {
     state.selectedStore = saved.selectedStore;
   }
 
-  if (saved.categoryPeriod === "weekly" || saved.categoryPeriod === "daily") {
+  // 기간 이름을 손으로 적어 두면 하나를 빠뜨린다 — 실제로 "실시간"을 빠뜨려서,
+  // 실시간을 보다 새로고침하면 주간으로 떨어졌다. 목록에서 직접 확인한다.
+  if (CATEGORY_PERIODS.some((period) => period.key === saved.categoryPeriod)) {
     state.categoryPeriod = saved.categoryPeriod;
   }
 
