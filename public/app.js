@@ -2219,7 +2219,10 @@ function saveViewState() {
         categoryPeriod: state.categoryPeriod,
         categoryGroup: state.categoryGroup,
         search: state.search,
-        scrollY: Math.round(window.scrollY)
+        // 아직 못 되돌린 위치가 있으면 그 값을 지킨다. 되돌리기 전에 그림이
+        // 한 번 돌면 그때의 scrollY(0)로 덮여서, 새로고침을 두 번 하면 위치를
+        // 잃는다.
+        scrollY: pendingScrollY > 0 ? pendingScrollY : Math.round(window.scrollY)
       })
     );
   } catch (error) {
@@ -2279,6 +2282,17 @@ function restoreScrollOnce() {
   }
 
   const target = pendingScrollY;
+
+  // 문서가 아직 그만큼 길지 않으면 내려갈 수가 없다. 첫 그림은 HTML에 실려 온
+  // 첫 화면 분량뿐이라, 분야별처럼 전체 데이터가 있어야 그려지는 화면에서는
+  // 여기서 내려 봐야 중간에 걸린다 — 실측에서 438 로 저장해 두고 77 에 멈췄다.
+  // 그럴 때는 값을 지우지 말고 다음 그림까지 들고 간다.
+  const reachable = document.documentElement.scrollHeight - window.innerHeight;
+
+  if (reachable < target - 4) {
+    return;
+  }
+
   pendingScrollY = 0;
 
   window.requestAnimationFrame(() => {
