@@ -1428,9 +1428,39 @@ a {
   border-top: 2px solid var(--ink);
 }
 
+/* "상상스퀘어만" 칩. 머리글의 권수 왼쪽에 선다.
+   꺼져 있을 때는 눌러 볼 수 있다는 것만 알리고, 켜지면 지금 걸러서 보는 중임이
+   한눈에 보여야 하므로 꽉 채운다 — 순위표에 두세 권만 남은 이유가 이 칩이다. */
+.watched-chip {
+  align-self: center;
+  margin-left: auto;
+  padding: 7px 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted-strong);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.watched-chip:hover {
+  border-color: var(--ink);
+  color: var(--ink);
+}
+
+.watched-chip.is-on {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: #fff;
+}
+
 .realtime-total {
   display: grid;
   min-width: 92px;
+  margin-left: 12px;
   text-align: right;
 }
 

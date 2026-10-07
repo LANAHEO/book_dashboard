@@ -4,6 +4,8 @@ const state = {
   activeView: "focus",
   search: "",
   selectedStore: "all",
+  // 순위표를 상상스퀘어 책만 남겨 보여 줄지.
+  onlyWatched: false,
   loading: false,
   refreshTimer: null,
   badgeResetTimer: null,
@@ -383,11 +385,20 @@ function searchableText(item) {
 }
 
 function filterItems(items) {
-  if (!state.search) {
-    return items;
+  let result = items;
+
+  // 상상스퀘어 책만 보기. 출판사 이름은 세 서점이 모두 "상상스퀘어"로 똑같이
+  // 내주므로(실측: 교보 18건·예스24 12건·알라딘 13건 모두 같은 표기) 그 한 가지로
+  // 가려낼 수 있다.
+  if (state.onlyWatched) {
+    result = result.filter(isWatchedPublisherItem);
   }
 
-  return items.filter((item) => searchableText(item).includes(state.search));
+  if (state.search) {
+    result = result.filter((item) => searchableText(item).includes(state.search));
+  }
+
+  return result;
 }
 
 function renderItem(item) {
@@ -431,7 +442,10 @@ function getRankPageData(list, items) {
   const paged =
     list.paginate !== false && (list.realtime || items.length > RANK_PAGE_SIZE);
 
-  if (!paged || state.search) {
+  // 걸러낸 뒤에는 쪽을 나누지 않는다. 상상스퀘어만 보면 100위 목록에서 두세
+  // 권만 남는데, 그걸 "1–20 / 21–40"으로 나누면 1쪽만 차 있고 나머지는 빈 쪽이
+  // 된다. 검색할 때와 같은 이유다.
+  if (!paged || state.search || state.onlyWatched) {
     return {
       items,
       currentPage: 1,
@@ -489,6 +503,22 @@ function renderRankPagination(list, pageData) {
   `;
 }
 
+// "상상스퀘어만" 칩. 실시간·분야별·일간·주간·월간 다섯 화면의 머리글에 같은
+// 모양으로 선다. 켜면 그 화면의 모든 순위표가 상상스퀘어 책만 남긴다.
+function renderWatchedChip() {
+  const on = state.onlyWatched;
+
+  return `
+    <button
+      type="button"
+      class="watched-chip${on ? " is-on" : ""}"
+      data-watched-filter="toggle"
+      aria-pressed="${on ? "true" : "false"}"
+      title="${on ? "모든 출판사 보기" : "상상스퀘어 책만 보기"}"
+    >${escapeHtml(WATCH_PUBLISHER_NAME)}만</button>
+  `;
+}
+
 function renderCard(list) {
   const filteredItems = filterItems(list.items);
   const pageData = getRankPageData(list, filteredItems);
@@ -519,12 +549,20 @@ function renderCard(list) {
     ? '<div class="panel-empty panel-loading">순위를 불러오는 중입니다.</div>'
     : items.length > 0
       ? `<ol class="rank-list">${items.map(renderItem).join("")}</ol>`
-      : '<div class="panel-empty">현재 검색어와 일치하는 책이 없습니다.</div>';
+      : `<div class="panel-empty">${
+          state.search
+            ? "현재 검색어와 일치하는 책이 없습니다."
+            : `이 순위에는 ${escapeHtml(WATCH_PUBLISHER_NAME)} 책이 없습니다.`
+        }</div>`;
+  // 걸러서 보는 중에는 "100권 수집"이 거짓말이 된다. 화면에는 두세 권만 있는데
+  // 100권이라고 적혀 있으면 어느 숫자를 믿어야 할지 알 수 없다.
   const countLabel = state.search
     ? `검색 결과 ${filteredItems.length}권`
-    : list.realtime
-      ? `100위 범위 · ${list.itemCount}권 수집`
-      : `${list.itemCount}권 수집`;
+    : state.onlyWatched
+      ? `${WATCH_PUBLISHER_NAME} ${filteredItems.length}권`
+      : list.realtime
+        ? `100위 범위 · ${list.itemCount}권 수집`
+        : `${list.itemCount}권 수집`;
   const typeLabel = list.typeLabel || (list.realtime ? "실시간" : "베스트");
 
   return `
@@ -1330,6 +1368,7 @@ function renderRealtimeBoard(lists) {
           <h2>전체 실시간 TOP 100</h2>
           <p>가장 자주 보는 순위입니다. 20위 단위로 빠르게 이동할 수 있습니다.</p>
         </div>
+        ${renderWatchedChip()}
         <div class="realtime-total">
           <strong>${escapeHtml(totalCollected)}</strong>
           <span>권 수집</span>
@@ -1557,6 +1596,7 @@ function renderCategoryBoard(lists) {
           <h2>분야별 순위</h2>
           <p>분야를 고르면 세 서점 순위가 나란히 섭니다.${storeNote ? " " + escapeHtml(storeNote) : ""}</p>
         </div>
+        ${renderWatchedChip()}
         <div class="realtime-total">
           <strong>${escapeHtml(totalCollected)}</strong>
           <span>권 수집</span>
@@ -1612,6 +1652,7 @@ function renderOverallPeriodBoard(lists, options) {
           <h2>${escapeHtml(title)}</h2>
           <p>${escapeHtml(description)}</p>
         </div>
+        ${renderWatchedChip()}
         <div class="realtime-total">
           <strong>${escapeHtml(totalCollected)}</strong>
           <span>권 수집</span>
@@ -2189,6 +2230,15 @@ function bindEvents() {
       return;
     }
 
+    const watchedButton = event.target.closest("[data-watched-filter]");
+    if (watchedButton) {
+      state.onlyWatched = !state.onlyWatched;
+      // 쪽 번호는 걸러내기 전 기준이라 그대로 두면 빈 쪽이 열린다.
+      state.rankPages = {};
+      renderDashboard();
+      return;
+    }
+
     const categoryPeriodButton = event.target.closest("[data-category-period]");
     if (categoryPeriodButton) {
       state.categoryPeriod = categoryPeriodButton.dataset.categoryPeriod;
@@ -2228,6 +2278,7 @@ function saveViewState() {
         categoryPeriod: state.categoryPeriod,
         categoryGroup: state.categoryGroup,
         search: state.search,
+        onlyWatched: state.onlyWatched,
         // 아직 못 되돌린 위치가 있으면 그 값을 지킨다. 되돌리기 전에 그림이
         // 한 번 돌면 그때의 scrollY(0)로 덮여서, 새로고침을 두 번 하면 위치를
         // 잃는다.
@@ -2271,6 +2322,8 @@ function restoreViewState() {
   if (typeof saved.categoryGroup === "string") {
     state.categoryGroup = saved.categoryGroup;
   }
+
+  state.onlyWatched = saved.onlyWatched === true;
 
   if (typeof saved.search === "string" && saved.search) {
     state.search = saved.search;
