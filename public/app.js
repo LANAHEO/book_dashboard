@@ -100,6 +100,7 @@ const CATEGORY_PERIOD_DEFAULT = "weekly";
 const VIEW_LABELS = {
   focus: "상상스퀘어 도서 순위",
   weekly: "전체 서점 주간 순위",
+  monthly: "월간 베스트",
   daily: "전체 서점 일간 순위",
   category: "분야별 순위",
   realtime: "전체 실시간 TOP 100"
@@ -1598,11 +1599,10 @@ function renderOverallPeriodBoard(lists, options) {
     return "";
   }
 
-  const { id, label, title, description, extraLists = [], extraTitle = "" } = options;
-  const totalCollected = [...lists, ...extraLists].reduce(
-    (sum, list) => sum + (list.itemCount || 0),
-    0
-  );
+  // extraLists·extraTitle 은 지웠다. 월간을 주간 화면 밑에 끼워 넣으려고 둔
+  // 장치였는데, 월간이 제 탭을 갖게 되어 쓰는 곳이 없어졌다.
+  const { id, label, title, description } = options;
+  const totalCollected = lists.reduce((sum, list) => sum + (list.itemCount || 0), 0);
 
   return `
     <section class="section-block standard-board" id="${escapeHtml(id)}">
@@ -1621,15 +1621,6 @@ function renderOverallPeriodBoard(lists, options) {
       <div class="standard-grid">
         ${sortByStoreOrder(lists).map(renderCard).join("")}
       </div>
-      ${extraLists.length
-        ? `
-          <div class="board-subheading">${escapeHtml(extraTitle)}</div>
-          ${renderSwipeSwitcher(sortByStoreOrder(extraLists), `${extraTitle} 서점 넘겨 보기`)}
-          <div class="standard-grid">
-            ${sortByStoreOrder(extraLists).map(renderCard).join("")}
-          </div>
-        `
-        : ""}
     </section>
   `;
 }
@@ -1656,9 +1647,16 @@ function renderDashboardSections(visibleSections) {
         id: "weekly-rankings",
         label: "Weekly",
         title: "전체 서점 주간 순위",
-        description: "서점 3곳의 주간 베스트를 100위까지 나란히 봅니다.",
-        extraLists: byPeriod("monthly"),
-        extraTitle: "월간 베스트"
+        description: "서점 3곳의 주간 베스트를 100위까지 나란히 봅니다."
+      }),
+    // 월간은 교보만 내준다. 예스24·알라딘에는 월간 집계가 없어서 한 칸짜리
+    // 화면이 되는데, 주간 밑에 딸려 있을 때보다 이쪽이 찾기 쉽다.
+    monthly: () =>
+      renderOverallPeriodBoard(byPeriod("monthly"), {
+        id: "monthly-rankings",
+        label: "Monthly",
+        title: "월간 베스트",
+        description: "월간 베스트는 교보문고만 제공합니다. 100위까지 봅니다."
       })
   };
 

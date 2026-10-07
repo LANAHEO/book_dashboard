@@ -2087,15 +2087,8 @@ a.focus-chip:hover {
   align-items: start;
 }
 
-.board-subheading {
-  margin: 18px 0 10px;
-  padding-top: 14px;
-  border-top: 1px solid var(--line);
-  color: var(--muted-strong);
-  font-size: 12px;
-  font-weight: 900;
-  letter-spacing: 0.02em;
-}
+/* .board-subheading 은 지웠다. 주간 화면 안에서 "월간 베스트"를 가르던 줄인데,
+   월간이 제 탭으로 나가면서 쓰는 곳이 없어졌다. */
 
 .standard-board .rank-scroll {
   max-height: 420px;
