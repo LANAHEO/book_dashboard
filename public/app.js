@@ -1857,6 +1857,11 @@ function renderDashboard() {
     return;
   }
 
+  // 그릴 때마다 지금 보고 있는 화면을 적어 둔다. 상태가 바뀌는 길이 여럿이라
+  // (탭·서점·분야·기간·검색) 각각에 적어 두면 하나를 빠뜨리기 쉬운데, 어느 길로
+  // 바뀌든 결국 여기를 지난다.
+  saveViewState();
+
   const visibleSections = getVisibleSections(state.dashboard.sections);
 
   // 맨 위 큰 숫자는 "마지막으로 서점을 확인한 시각"이다.
@@ -2192,6 +2197,95 @@ function bindEvents() {
   });
 }
 
+// 새로고침해도 보던 화면 그대로 돌아오게 한다.
+//
+// 어느 탭을 보고 있었는지는 메모리에만 있어서, 새로고침하면 늘 첫 화면(상상스퀘어)
+// 으로 떨어졌다. 주소의 #에 적어 두는 방법은 못 쓴다 — 이 화면은 #을 지우기
+// 때문이다(아래 removeAddressHash). 그래서 브라우저 탭 저장소에 적는다.
+//
+// sessionStorage 를 쓰는 이유: 새로고침과 이 화면이 스스로 하는 재시작(배포가
+// 생기면 window.location.reload 를 부른다)에는 남아 있고, 브라우저를 껐다 켜고
+// 새로 들어올 때는 첫 화면부터 시작한다. 지난주에 보던 분야가 튀어나오면
+// 그게 더 당황스럽다.
+const VIEW_STATE_KEY = "book-radar-view";
+
+function saveViewState() {
+  try {
+    window.sessionStorage.setItem(
+      VIEW_STATE_KEY,
+      JSON.stringify({
+        activeView: state.activeView,
+        selectedStore: state.selectedStore,
+        categoryPeriod: state.categoryPeriod,
+        categoryGroup: state.categoryGroup,
+        search: state.search,
+        scrollY: Math.round(window.scrollY)
+      })
+    );
+  } catch (error) {
+    // 저장소를 막아 둔 브라우저도 있다. 기억 못 하는 것뿐이니 넘어간다.
+  }
+}
+
+function restoreViewState() {
+  let saved = null;
+
+  try {
+    saved = JSON.parse(window.sessionStorage.getItem(VIEW_STATE_KEY) || "null");
+  } catch (error) {
+    saved = null;
+  }
+
+  if (!saved || typeof saved !== "object") {
+    return;
+  }
+
+  // 저장된 값이라고 그대로 믿지 않는다. 예전 버전이 적어 둔 탭 이름이 지금은
+  // 없을 수 있고, 그러면 빈 화면이 된다.
+  if (VIEW_LABELS[saved.activeView]) {
+    state.activeView = saved.activeView;
+  }
+
+  if (typeof saved.selectedStore === "string") {
+    state.selectedStore = saved.selectedStore;
+  }
+
+  if (saved.categoryPeriod === "weekly" || saved.categoryPeriod === "daily") {
+    state.categoryPeriod = saved.categoryPeriod;
+  }
+
+  if (typeof saved.categoryGroup === "string") {
+    state.categoryGroup = saved.categoryGroup;
+  }
+
+  if (typeof saved.search === "string" && saved.search) {
+    state.search = saved.search;
+
+    if (elements.searchInput) {
+      elements.searchInput.value = saved.search;
+    }
+  }
+
+  pendingScrollY = Number(saved.scrollY) || 0;
+}
+
+// 그리기 전에는 문서가 짧아서 스크롤이 안 먹는다. 첫 그림이 끝난 뒤 한 번만
+// 되돌리고, 그 뒤 자동 갱신으로 다시 그릴 때는 건드리지 않는다.
+let pendingScrollY = 0;
+
+function restoreScrollOnce() {
+  if (pendingScrollY <= 0) {
+    return;
+  }
+
+  const target = pendingScrollY;
+  pendingScrollY = 0;
+
+  window.requestAnimationFrame(() => {
+    window.scrollTo({ top: target, behavior: "instant" });
+  });
+}
+
 function removeAddressHash() {
   if (!window.location.hash) {
     return;
@@ -2213,6 +2307,11 @@ showIdleBadge();
 // 있으면 그걸로 곧바로 그리고, 나머지 탭에 필요한 전체 데이터는 뒤에서 받는다.
 // 없으면(저장이 아직 없거나 실패) 예전처럼 API부터 기다린다.
 function start() {
+  // 그리기 전에 되살린다. 그린 다음에 되살리면 첫 화면이 한 번 깜빡이고
+  // 보던 화면으로 바뀐다.
+  restoreViewState();
+  syncViewNav();
+
   const bootstrap = window.__BOOTSTRAP__;
 
   if (bootstrap && Array.isArray(bootstrap.focusBooks)) {
@@ -2223,6 +2322,7 @@ function start() {
     // 실제로 그렇게 됐다 — 한 번 여는 동안 페이지가 6번 다시 떴다.
     state.hasLoadedOnce = true;
     renderDashboard();
+    restoreScrollOnce();
     showIdleBadge();
   }
 
@@ -2233,7 +2333,12 @@ function start() {
   // 때문이다. 열릴 때 확인하는 일은 여는 쪽에서 직접 시키는 것이 맞다.
   //
   // loadDashboard 는 실패해도 예외를 던지지 않으므로 뒤의 확인은 언제나 돈다.
-  loadDashboard().then(() => loadDashboard("quick"));
+  loadDashboard()
+    .then(() => {
+      // 부트스트랩이 없어 여기서 처음 그린 경우에도 되돌려 준다.
+      restoreScrollOnce();
+      return loadDashboard("quick");
+    });
 }
 
 start();
