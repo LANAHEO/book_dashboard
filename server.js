@@ -189,6 +189,7 @@ const FOCUS_CATALOG_ID = "publisher-catalog";
 // 문장부호는 남기므로, "AI, 신의 탄생"의 쉼표를 빠뜨리면 앞부분 일치가 깨져
 // 그 책만 조용히 고정되지 않는다.
 const FOCUS_PINNED_TITLES = [
+  "부자의 5가지 철학",
   "읽는 인간",
   "인생을 위한 최소한의 생각",
   "가브리엘의 왕초보 영어회화",
