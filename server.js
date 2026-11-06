@@ -1,5 +1,6 @@
 "use strict";
 
+const { AsyncLocalStorage } = require("node:async_hooks");
 const crypto = require("node:crypto");
 const http = require("node:http");
 const fs = require("node:fs/promises");
@@ -71,12 +72,18 @@ const DASHBOARD_SNAPSHOT_ID = "latest";
 // 그런데 밖(GitHub Actions 러너, 미국)에서 시험해 보니 교보 59/59·예스24 84/84 는
 // 받아졌지만 알라딘은 91/91 이 403 이었다. 알라딘은 해외에서 오는 접속을
 // CloudFront 에서 막는다 — 같은 주소가 한국에서는 원 서버(IIS)가 바로 답한다.
-// 그래서 수집이 셋으로 나뉜다.
+// 그래서 수집이 둘로 나뉜다.
 //
 //   GitHub Actions  교보·예스24 를 모으고, 화면이 읽는 스냅샷을 만든다.
-//   PC 로컬 서버     알라딘과 상상스퀘어 신간 목록(알라딘 검색을 쓴다)만 모아
-//                   목록 행으로 남긴다. 스냅샷은 만들지 않는다.
-//   Vercel           서점에 가지 않고 스냅샷도 쓰지 않는다. 읽어서 보여 주기만 한다.
+//   Vercel(서울)     화면 요청으로는 서점에 가지 않는다. Actions 가 회차마다 인증을 붙여
+//                   /api/collect-rows 를 부를 때만 알라딘과 상상스퀘어 신간 목록(알라딘
+//                   검색을 쓴다)을 받아 목록 행으로 남긴다. 스냅샷은 쓰지 않는다.
+//
+// 처음(11-06 오전)에는 알라딘을 PC 로컬 서버가 맡았는데, 그러면 PC 를 끄는 순간
+// 알라딘만 멈춘다. 재 보니 알라딘만 받는 데 드는 CPU 는 한 달 1~2시간이라
+// (평소 확인 0.03초, 순위가 바뀐 회차 0.9초, 6시간마다 전수 5.5초 — 알라딘 실시간은
+// 한 시간에 한 번쯤 바뀐다) 무료 한도 안에서 Vercel 에 맡길 수 있다. PC 로컬 서버는
+// 이제 COLLECT_STORES=none 으로 보기만 한다.
 //
 // 스냅샷을 쓰는 곳은 하나여야 한다. 둘이 쓰면 순위 이력이 몇 분 간격으로 두 번
 // 남아 ▲▼ 의 비교 기준이 "방금"으로 당겨진다. 맡지 않은 서점의 값은 그 서점을
@@ -92,7 +99,22 @@ const ON_VERCEL = Boolean(process.env.VERCEL);
 // 상상스퀘어 신간 목록은 알라딘 검색에서 온다. 알라딘을 맡은 쪽이 같이 맡는다.
 const CATALOG_STORE_ID = "aladin";
 
+// 요청 하나 동안만 역할을 바꿔 끼운다. Vercel 은 평소 읽기만 하지만, GitHub Actions 가
+// 인증을 붙여 /api/collect-rows 를 부르는 동안에는 알라딘을 받아 목록 행으로 남긴다
+// (Vercel 은 서울에 있어 알라딘이 막지 않는다). 그래서 PC 가 꺼져 있어도 알라딘이 돈다.
+//
+// 환경변수를 바꾸지 않고 이렇게 하는 이유: Vercel 은 한 인스턴스가 요청 여러 개를
+// 동시에 처리한다. 프로세스 전체의 역할을 바꾸면 그 사이에 들어온 화면 요청까지
+// 알라딘을 맡은 것처럼 굴어 서점에 간다. AsyncLocalStorage 는 이 요청의 흐름에만 붙는다.
+const collectScope = new AsyncLocalStorage();
+
 function collectStoreIds() {
+  const scoped = collectScope.getStore();
+
+  if (scoped) {
+    return scoped.stores;
+  }
+
   const raw = cleanEnvValue(process.env.COLLECT_STORES).toLowerCase();
 
   if (!raw) {
@@ -123,6 +145,12 @@ function ownsAnyStore() {
 }
 
 function isSnapshotWriter() {
+  const scoped = collectScope.getStore();
+
+  if (scoped) {
+    return scoped.writer === true;
+  }
+
   const raw = cleanEnvValue(process.env.SNAPSHOT_WRITER).toLowerCase();
 
   if (!raw) {
@@ -4270,6 +4298,45 @@ async function runCollection(options = {}) {
   };
 }
 
+// 맡은 서점만 받아 목록 행으로 남긴다. 스냅샷은 쓰지 않는다 — 그건 GitHub Actions
+// 수집기가 이 행이 바뀐 것을 보고 한다(refreshForeignSources).
+//
+// Vercel 이 알라딘을 맡을 때 /api/collect-rows 가 부른다. CPU 를 아끼는 것이 전부다.
+// 무료 한도(Active CPU 월 4시간)를 넘겨 배포가 멈춘 적이 있다.
+// scope=realtime  종합 실시간 하나만 받아 지난 값과 견주고, 바뀌었을 때만 나머지
+//                 실시간 목록을 받는다. 조용할 때는 요청 한 번으로 끝난다.
+// scope=all       실시간·일간·주간과 상상스퀘어 신간 목록까지 전부(6시간마다).
+async function runRowCollection(options = {}) {
+  const scope = options.scope === "all" ? "all" : "realtime";
+  const startedAt = Date.now();
+
+  if (!ownsAnyStore()) {
+    return { ok: false, status: 409, scope, error: "맡은 서점이 없습니다." };
+  }
+
+  if (scope === "all") {
+    await Promise.allSettled([
+      refreshRealtimeSources(),
+      refreshStandardSources(),
+      ownsStore(CATALOG_STORE_ID) ? loadPublisherCatalog({ force: true }) : null
+    ]);
+
+    return { ok: true, scope, elapsedMs: Date.now() - startedAt };
+  }
+
+  const result = await collectRealtimeOnce({ force: options.force === true });
+  const probe = result.probe.results;
+
+  return {
+    // 서점이 막았거나 못 열었으면 실패로 알린다. 부른 쪽이 연속 실패를 센다.
+    ok: probe.length > 0 && probe.every((entry) => entry.ok),
+    scope,
+    changed: result.changed,
+    probe,
+    elapsedMs: Date.now() - startedAt
+  };
+}
+
 // 요청 처리를 함수로 떼어 둔다. 상시 서버(로컬·Render)는 createServer로 감싸 쓰고,
 // Vercel은 api/index.js가 이걸 그대로 서버리스 핸들러로 내보낸다.
 async function handleRequest(request, response) {
@@ -4493,6 +4560,49 @@ async function handleRequest(request, response) {
       }
 
       jsonResponse(response, status, { error: message });
+    }
+
+    return;
+  }
+
+  // 서점 하나를 받아 목록 행으로만 남긴다(runRowCollection). GitHub Actions 수집기가
+  // 5분마다 Vercel 의 이 길을 불러 알라딘을 받게 한다 — 알라딘은 해외 접속을 막아
+  // Actions 러너(미국)에서는 못 받지만 Vercel(서울)에서는 받아진다.
+  // /api/collect 와 같은 비밀값으로 인증한다. 열려 있으면 누구나 Vercel 이 서점을
+  // 돌게 해서 CPU 를 쓰게 할 수 있다.
+  if (url.pathname === "/api/collect-rows") {
+    const secrets = [process.env.COLLECT_SECRET, process.env.CRON_SECRET]
+      .map((value) => String(value || ""))
+      .filter(Boolean);
+    const header = String(request.headers.authorization || "");
+    const provided = header.startsWith("Bearer ") ? header.slice(7) : "";
+
+    if (!secrets.length || !secrets.includes(provided)) {
+      jsonResponse(response, 401, { error: "인증이 필요합니다." });
+      return;
+    }
+
+    const storeId = url.searchParams.get("store") || "";
+
+    if (!STORES.some((store) => store.id === storeId)) {
+      jsonResponse(response, 400, { error: `그런 서점이 없습니다: ${storeId}` });
+      return;
+    }
+
+    try {
+      const { status, ...result } = await collectScope.run(
+        { stores: new Set([storeId]), writer: false },
+        () =>
+          runRowCollection({
+            scope: url.searchParams.get("scope"),
+            force: url.searchParams.get("force") === "1"
+          })
+      );
+
+      jsonResponse(response, status || (result.ok ? 200 : 502), { store: storeId, ...result });
+    } catch (error) {
+      console.error("[collect-rows] failed:", error);
+      jsonResponse(response, 500, { ok: false, store: storeId, error: String(error.message || error) });
     }
 
     return;

@@ -18,7 +18,8 @@ Book Radar는 원래 상시 실행되는 Node HTTP 서버였다. Vercel 함수�
 
 ## 수집: 누가 무엇을 모으나
 
-**Vercel은 수집하지 않는다.** 화면과 API만 내주고, 서점에도 가지 않고 스냅샷도 쓰지 않는다.
+**Vercel은 화면 요청으로는 수집하지 않는다.** 서점에 가는 것은 GitHub Actions가 인증을 붙여
+`/api/collect-rows`를 부를 때(알라딘만)뿐이고, 스냅샷은 어떤 경우에도 쓰지 않는다.
 
 2026-11-06에 Vercel이 배포를 통째로 멈췄다(`402 DEPLOYMENT_DISABLED`). Hobby 무료 한도인
 Active CPU 4시간을 수집이 6시간 25분 써서다. 원인은 두 가지였다.
@@ -28,34 +29,37 @@ Active CPU 4시간을 수집이 6시간 25분 써서다. 원인은 두 가지였
 - 화면이 열려 있는 동안 탭마다 5분에 한 번 `?refresh=quick`으로 서점을 돌게 했다.
   지금 화면은 저장된 값만 읽는다.
 
-수집은 셋으로 나뉜다. 알라딘이 해외 접속을 CloudFront에서 막기 때문이다 — GitHub
-Actions 러너(미국)에서 시험하니 교보 59/59·예스24 84/84는 받아졌고 알라딘은 91/91이 403이었다.
+알라딘은 해외 접속을 CloudFront에서 막는다 — GitHub Actions 러너(미국)에서 시험하니
+교보 59/59·예스24 84/84는 받아졌고 알라딘은 91/91이 403이었다. Vercel(서울, icn1)에서는 받아진다.
 
 | 어디서 | 무엇을 | 설정 |
 |---|---|---|
-| GitHub Actions (`collect.yml` → `scripts/collector.js`) | 교보·예스24 수집, **스냅샷 작성(유일)** | `COLLECT_STORES=kyobo,yes24` (워크플로에 적혀 있음) |
-| PC 로컬 서버 (`npm start`) | 알라딘·상상스퀘어 신간 목록 수집, 목록 행만 저장 | `.env`에 `COLLECT_STORES=aladin`, `SNAPSHOT_WRITER=0` |
-| Vercel | 읽기만 | 설정 없음(`VERCEL`이면 기본이 읽기 전용) |
+| GitHub Actions (`collect.yml` → `scripts/collector.js`) | 교보·예스24 수집, **스냅샷 작성(유일)**, 회차마다 Vercel에 알라딘 수집 요청 | 워크플로에 `COLLECT_STORES=kyobo,yes24`, `VERCEL_COLLECT_STORES=aladin` |
+| Vercel (`/api/collect-rows?store=aladin`) | 알라딘·상상스퀘어 신간 목록 수집, 목록 행만 저장 | 설정 없음 — 그 요청 동안만 알라딘을 맡는다(`AsyncLocalStorage`). 화면 요청은 여전히 읽기만 |
+| PC 로컬 서버 (`npm start`) | 보기만(로컬 화면) | `.env`에 `COLLECT_STORES=none`, `SNAPSHOT_WRITER=0` |
+
+알라딘을 처음에는 PC가 맡았는데, 그러면 PC를 끄는 순간 알라딘만 멈췄다. 알라딘만 받는 CPU를
+재 보니(평소 확인 0.03초, 순위가 바뀐 회차 0.9초, 6시간마다 전수 5.5초; 알라딘 실시간은 한 시간에
+한 번쯤 바뀐다) 한 달 1~2시간이라 Hobby 한도(4시간) 안에서 Vercel에 맡겼다.
 
 스냅샷을 쓰는 곳은 하나여야 한다. 둘이 쓰면 순위 이력이 몇 분 간격으로 두 번 남아
-▲▼ 비교 기준이 "방금"으로 당겨진다. Actions 수집기는 회차마다 PC가 남긴 알라딘 행이
+▲▼ 비교 기준이 "방금"으로 당겨진다. Actions 수집기는 회차마다 Vercel이 남긴 알라딘 행이
 바뀌었는지 보고(`payload.updatedAt`만 받아 본다), 바뀌었으면 스냅샷에 싣는다.
-
-PC가 꺼져 있으면 알라딘만 그 시각에 멈춰 보인다. 교보·예스24는 계속 돈다.
 
 ### GitHub에 넣을 것
 
 리포 **Settings → Secrets and variables → Actions**
 
 - 시크릿 `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`: 로컬 `.env`와 같은 값
-- 변수 `DASHBOARD_BASE_URL`(선택): 순위 대조 검사가 읽을 배포 주소. 없으면 검사만 건너뛴다.
+- 시크릿 `COLLECT_SECRET`: Vercel 환경변수 `COLLECT_SECRET`과 같은 값(알라딘 수집 요청 인증)
+- 변수 `DASHBOARD_BASE_URL`: 배포 주소. 알라딘 수집 요청과 순위 대조 검사가 쓴다.
 
-`COLLECT_SECRET`은 이제 쓰지 않는다. `/api/collect`는 Vercel에서 409로 거절한다.
+`/api/collect`(전체 수집 + 스냅샷)는 Vercel에서 409로 거절한다.
 
 ### 주기
 
-Actions 수집기는 시계의 5분 경계 + 60초(:01 :06 …)에, PC의 알라딘은 경계(:00 :05 …)에 돈다.
-알라딘이 먼저 끝나 있어야 같은 회차의 스냅샷에 실린다. 전수 수집은 UTC 00·06·12·18시.
+Actions 수집기는 시계의 5분 경계 + 60초(:01 :06 …)에 돈다. 회차마다 먼저 Vercel에 알라딘을
+받게 하고, 이어서 교보·예스24를 받은 뒤 스냅샷을 만든다. 전수 수집은 UTC 00·06·12·18시.
 값은 `server.js`의 `COLLECT_INTERVAL_MINUTES` 하나다.
 
 Hobby 크론은 하루 1회라 쓰지 않는다. GitHub 예약도 정시를 지키지 않아서, 한 번 뜬 실행이

@@ -21,8 +21,9 @@ name: 순위 수집
 # 실행 시간이 무료다.
 #
 # 단 알라딘은 해외에서 오는 접속을 막아 이 러너(미국)에서는 받아지지 않는다.
-# 그래서 여기서는 교보·예스24 만 모으고, 알라딘은 PC 로컬 서버가 모아 Supabase 에
-# 남긴다. 화면이 읽는 스냅샷은 여기서만 만든다(server.js "누가 어느 서점을 모으는가").
+# 그래서 여기서는 교보·예스24 만 직접 모으고, 알라딘은 회차마다 서울에 있는 Vercel 에게
+# 받아 달라고 한다(/api/collect-rows). 화면이 읽는 스냅샷은 여기서만 만든다
+# (server.js "누가 어느 서점을 모으는가").
 #
 # 그런데 GitHub 무료 예약은 적어 둔 시각을 지키지 않는다. `*/15`(하루 96회)로 두고
 # 11일치 실행 기록을 세어 보니 실제로는 하루 9.7회, 실행 간격 중앙값 133분,
@@ -87,10 +88,14 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          # 이 러너가 서점에서 직접 받는 곳. 알라딘은 해외 접속을 막아서 PC 가 맡는다.
+          # 이 러너가 서점에서 직접 받는 곳.
           COLLECT_STORES: kyobo,yes24
           SNAPSHOT_WRITER: "1"
-          # 순위 대조 검사가 읽을 배포 주소. 비어 있으면 검사만 건너뛴다.
+          # 알라딘은 해외 접속을 막아서 서울에 있는 Vercel 에게 회차마다 받아 달라고 한다.
+          # 그 요청의 인증에 COLLECT_SECRET 을 쓴다(Vercel 환경변수와 같은 값).
+          VERCEL_COLLECT_STORES: aladin
+          COLLECT_SECRET: ${{ secrets.COLLECT_SECRET }}
+          # 배포 주소. 위 알라딘 요청과 순위 대조 검사가 쓴다.
           BASE_URL: ${{ vars.DASHBOARD_BASE_URL }}
           FIRST_SCOPE: ${{ github.event_name == 'workflow_dispatch' && inputs.scope || (github.event.schedule == '20 */6 * * *' && 'all' || 'realtime') }}
           RUN_MINUTES: ${{ inputs.minutes }}

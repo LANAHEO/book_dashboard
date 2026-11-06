@@ -1,8 +1,9 @@
 "use strict";
 
 // GitHub Actions 수집기. 교보·예스24 를 모으고 화면이 읽는 스냅샷을 만든다.
-// 알라딘은 해외 접속을 막아서 PC 로컬 서버가 맡는다(server.js "누가 어느 서점을
-// 모으는가" 참고). 이 수집기는 PC 가 남긴 알라딘 행이 바뀌었는지만 보고 스냅샷에 싣는다.
+// 알라딘은 해외 접속을 막아서 이 러너에서는 못 받는다. 회차마다 Vercel(서울)에게
+// 알라딘을 받아 달라고 부탁하고(collectRemoteRows), Vercel 이 남긴 알라딘 행이
+// 바뀌었는지 보고 스냅샷에 싣는다(server.js "누가 어느 서점을 모으는가" 참고).
 //
 //   node scripts/collector.js --until <마감 epoch초> [--first-scope all] [--problems <파일>]
 //
@@ -49,8 +50,20 @@ const ALL_SCOPE_HOURS = new Set([0, 6, 12, 18]);
 // 순위 대조 검사는 서점 페이지를 여러 장 여는 일이라 한 시간에 한 번.
 const CHECK_TIMEOUT_MS = 10 * 60 * 1000;
 
+// 이 러너가 직접 못 받는 서점은 Vercel(서울)에게 받아 달라고 한다. 지금은 알라딘이다
+// — 해외 접속을 막아 이 러너(미국)에서는 403 이지만 Vercel 에서는 받아진다.
+// Vercel 은 받은 것을 목록 행으로만 남기고, 스냅샷은 이 수집기가 그 행을 읽어 만든다.
+// Vercel 함수 상한(300초) 안에서 끝나야 한다. 전수 수집이 1분 남짓이다.
+const REMOTE_STORES = String(process.env.VERCEL_COLLECT_STORES || "")
+  .split(",")
+  .map((value) => value.trim())
+  .filter(Boolean);
+const REMOTE_TIMEOUT_MS = 280 * 1000;
+
 const problems = new Set();
 let staleWarn = false;
+let remoteFailStreak = 0;
+let remoteSkipLogged = false;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -77,6 +90,54 @@ function describeResult(result) {
   const action = result.skipped ? "건너뜀" : "스냅샷 다시 씀";
 
   return `${action}${probe ? ` · ${probe}` : ""}${foreign}`;
+}
+
+// Vercel 에게 맡은 서점(알라딘)을 받아 달라고 한다. 실패해도 이 회차의 교보·예스24
+// 수집은 그대로 한다. 연속으로 실패하면 마감 때 빨간 표시로 알린다.
+async function collectRemoteRows(scope) {
+  if (!REMOTE_STORES.length) {
+    return;
+  }
+
+  const base = String(process.env.BASE_URL || "").trim().replace(/\/$/, "");
+  const secret = String(process.env.COLLECT_SECRET || "").trim();
+
+  if (!base || !secret) {
+    if (!remoteSkipLogged) {
+      remoteSkipLogged = true;
+      console.log(`${stamp()} Vercel 수집 건너뜀 — BASE_URL 이나 COLLECT_SECRET 이 없다`);
+      problems.add("Vercel 에 알라딘 수집을 부탁하지 못했다(BASE_URL 또는 COLLECT_SECRET 없음).");
+    }
+    return;
+  }
+
+  for (const store of REMOTE_STORES) {
+    let line;
+    let ok = false;
+
+    try {
+      const response = await fetch(
+        `${base}/api/collect-rows?store=${encodeURIComponent(store)}&scope=${scope}`,
+        {
+          headers: { authorization: `Bearer ${secret}` },
+          signal: AbortSignal.timeout(REMOTE_TIMEOUT_MS)
+        }
+      );
+      const body = await response.json().catch(() => ({}));
+      ok = response.ok && body.ok === true;
+      const what = scope === "all" ? "전부 받음" : body.changed ? "바뀜, 다시 받음" : "같음";
+      line = `HTTP ${response.status} · ${((body.elapsedMs || 0) / 1000).toFixed(1)}초 · ${ok ? what : body.error || "실패"}`;
+    } catch (error) {
+      line = `요청 실패 — ${error.message}`;
+    }
+
+    remoteFailStreak = ok ? 0 : remoteFailStreak + 1;
+    console.log(`${stamp()} vercel:${store.padEnd(6)} scope=${scope.padEnd(8)} ${line}`);
+
+    if (remoteFailStreak >= 5) {
+      problems.add("Vercel 의 알라딘 수집이 5회 넘게 연속 실패한 적이 있다.");
+    }
+  }
 }
 
 // 서점 페이지를 직접 열어 배포된 화면의 순위와 견준다. 결과로 순환을 멈추지 않는다
@@ -146,6 +207,9 @@ async function main() {
       scope = "all";
       lastAllHour = hour;
     }
+
+    // 알라딘을 먼저 받아 둔다. 그래야 바로 뒤의 스냅샷이 이번 회차의 알라딘을 싣는다.
+    await collectRemoteRows(scope);
 
     try {
       const result = await server.runCollection({ scope });
