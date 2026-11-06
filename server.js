@@ -1,5 +1,6 @@
 "use strict";
 
+const crypto = require("node:crypto");
 const http = require("node:http");
 const fs = require("node:fs/promises");
 const path = require("node:path");
@@ -1108,6 +1109,40 @@ async function readDashboardSnapshot() {
   }
 
   return { ...local, source: "file" };
+}
+
+// 순위표 전체(약 800KB) 대신 "바뀌었는지"만 알려 주는 작은 응답(약 200바이트).
+//
+// 열어 둔 탭은 5분마다 새 값을 확인한다. 예전에는 그때마다 순위표를 통째로 받았는데,
+// 순위표는 순위가 바뀔 때만 다시 만들어지므로 대부분은 같은 800KB 를 또 받은 것이다.
+// Vercel 무료 플랜은 함수가 내보내는 전송량(Fast Origin Transfer)이 월 10GB 라,
+// 하루 종일 열어 둔 탭 하나가 한 달에 7GB 가까이 쓸 수 있었다. 이제 화면은 이것부터
+// 묻고, generatedAt 이 달라졌을 때만 전체를 받는다.
+async function readDashboardMeta() {
+  const [lastCheckedAt, assetVersion] = await Promise.all([
+    readCollectHeartbeat(),
+    getAssetVersion()
+  ]);
+
+  if (getSupabaseConfig()) {
+    const rows = await supabaseRequest(
+      `dashboard_snapshots?id=eq.${encodeURIComponent(DASHBOARD_SNAPSHOT_ID)}` +
+        "&select=generatedAt:payload->>generatedAt&limit=1"
+    );
+    const row = Array.isArray(rows) && rows[0];
+
+    if (row && row.generatedAt) {
+      return { generatedAt: row.generatedAt, assetVersion, lastCheckedAt };
+    }
+  }
+
+  const snapshot = await readDashboardSnapshot();
+
+  if (!snapshot || !snapshot.payload) {
+    return null;
+  }
+
+  return { generatedAt: snapshot.payload.generatedAt || "", assetVersion, lastCheckedAt };
 }
 
 function rankHistoryKey(bookKey, storeId, listId) {
@@ -3708,21 +3743,39 @@ function getMimeType(filePath) {
 const ASSET_FILES = ["index.html", "app.js", "styles.css"];
 
 // 대시보드는 탭을 켜둔 채로 데이터만 자동 갱신하기 때문에, 프런트엔드 파일이
-// 바뀌어도 열린 탭은 예전 코드를 계속 쓴다. 버전을 payload에 실어 보내서
+// 바뀌어도 열린 탭은 예전 코드를 계속 쓴다. 버전을 응답에 실어 보내서
 // 클라이언트가 스스로 새로고침하게 한다.
-async function getAssetVersion() {
-  const stamps = await Promise.all(
-    ASSET_FILES.map(async (name) => {
-      try {
-        const info = await fs.stat(path.join(PUBLIC_DIR, name));
-        return `${name}:${Math.round(info.mtimeMs)}`;
-      } catch (error) {
-        return `${name}:0`;
-      }
-    })
-  );
+//
+// 두 가지를 지킨다.
+// - 파일 내용으로 만든다. 예전에는 수정 시각을 썼는데, 스냅샷을 만드는 GitHub
+//   Actions 는 실행마다 리포를 새로 받아 수정 시각이 매번 달라진다. 그대로 두면
+//   내용은 그대로인데 열린 탭이 5시간 반마다 괜히 새로고침된다.
+// - 화면을 내주는 프로세스(Vercel)가 자기 파일로 붙인다. 알고 싶은 것은 "배포로
+//   화면 파일이 바뀌었는가"이므로 스냅샷에 저장된 값(만든 쪽의 파일)을 쓰면 안 된다.
+const ASSET_VERSION_TTL_MS = 60 * 1000;
+let assetVersionCache = null;
 
-  return stamps.join("|");
+function getAssetVersion() {
+  const now = Date.now();
+
+  // 로컬에서 화면 파일을 고치는 동안에도 1분 안에 알아채도록 짧게만 들고 있는다.
+  if (!assetVersionCache || assetVersionCache.expiresAt <= now) {
+    assetVersionCache = {
+      expiresAt: now + ASSET_VERSION_TTL_MS,
+      promise: Promise.all(
+        ASSET_FILES.map(async (name) => {
+          try {
+            const body = await fs.readFile(path.join(PUBLIC_DIR, name));
+            return crypto.createHash("sha1").update(body).digest("hex").slice(0, 10);
+          } catch (error) {
+            return "0";
+          }
+        })
+      ).then((parts) => parts.join("."))
+    };
+  }
+
+  return assetVersionCache.promise;
 }
 
 // 스크립트 태그 안에 JSON을 넣을 때는 </script> 와 유니코드 줄 구분자를 막아야
@@ -4244,6 +4297,25 @@ async function handleRequest(request, response) {
     return;
   }
 
+  // 순위표가 바뀌었는지만 묻는 길(readDashboardMeta 위 설명). 스냅샷과 같은 캐시 정책이다.
+  if (url.pathname === "/api/dashboard/meta") {
+    try {
+      const meta = await readDashboardMeta();
+
+      if (!meta) {
+        jsonResponse(response, 503, { error: "저장된 순위표가 없습니다." });
+        return;
+      }
+
+      jsonResponse(response, 200, meta, SNAPSHOT_CACHE_CONTROL);
+    } catch (error) {
+      console.error("[dashboard] meta read failed:", error);
+      jsonResponse(response, 502, { error: "순위표 상태를 읽지 못했습니다." });
+    }
+
+    return;
+  }
+
   if (url.pathname === "/api/dashboard") {
     const refreshParam = url.searchParams.get("refresh");
 
@@ -4282,9 +4354,10 @@ async function handleRequest(request, response) {
 
     if (!forceIds.length) {
       try {
-        const [snapshot, lastCheckedAt] = await Promise.all([
+        const [snapshot, lastCheckedAt, assetVersion] = await Promise.all([
           readDashboardSnapshot(),
-          readCollectHeartbeat()
+          readCollectHeartbeat(),
+          getAssetVersion()
         ]);
         if (snapshot && snapshot.payload && Array.isArray(snapshot.payload.sections)) {
           jsonResponse(
@@ -4292,6 +4365,8 @@ async function handleRequest(request, response) {
             200,
             {
               ...snapshot.payload,
+              // 스냅샷을 만든 쪽이 아니라 지금 화면을 내주는 쪽의 버전이다(getAssetVersion).
+              assetVersion,
               cacheState: snapshot.source || "snapshot",
               snapshotUpdatedAt: snapshot.updatedAt,
               lastCheckedAt

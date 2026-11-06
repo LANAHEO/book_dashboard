@@ -2150,12 +2150,61 @@ function scheduleDashboardRefresh() {
   const delay = state.dashboard ? Math.max(collectIntervalMs(), 60_000) : 30_000;
 
   state.refreshTimer = window.setTimeout(() => {
-    // 저장된 순위표를 다시 읽기만 한다. 예전에는 여기서 서점까지 확인시켰는데
+    // 저장된 순위표를 읽기만 한다. 예전에는 여기서 서점까지 확인시켰는데
     // (refresh=quick), 그러면 열어 둔 탭 하나하나가 5분마다 서버에게 서점을
     // 돌게 해서 수집기를 하나 더 돌리는 셈이었다 — Vercel CPU 한도를 넘긴 원인
     // 중 하나다. 수집은 이제 5분마다 따로 돌므로 읽기만 해도 늦지 않는다.
-    loadDashboard();
+    refreshIfChanged();
   }, delay);
+}
+
+// 순위표가 바뀌었을 때만 전체를 받는다.
+//
+// 순위표(약 800KB)는 순위가 바뀔 때만 다시 만들어지는데, 열어 둔 탭은 5분마다
+// 확인한다. 그때마다 통째로 받으면 대부분 같은 800KB 를 또 받는 것이고, Vercel
+// 무료 플랜의 전송량 한도(월 10GB)를 탭 몇 개가 다 쓸 수 있다. 그래서 먼저
+// "언제 만든 순위표인가"만 묻고(약 200바이트), 달라졌을 때만 전체를 받는다.
+// 위쪽 "마지막 확인" 시각은 순위가 안 바뀌어도 5분마다 움직여야 하므로 그것만 고친다.
+async function refreshIfChanged() {
+  let needFull = !state.dashboard;
+
+  if (!needFull) {
+    try {
+      const response = await fetch("/api/dashboard/meta");
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const meta = await response.json();
+
+      // 화면 파일이 바뀌었으면 loadDashboard 와 같은 이유로 한 번 새로고침한다.
+      if (meta.assetVersion && state.assetVersion && meta.assetVersion !== state.assetVersion) {
+        window.location.reload();
+        return;
+      }
+
+      if (meta.generatedAt !== state.dashboard.generatedAt) {
+        needFull = true;
+      } else if (meta.lastCheckedAt) {
+        state.dashboard.lastCheckedAt = meta.lastCheckedAt;
+        elements.generatedAt.textContent = formatDateTime(
+          latestMoment(state.dashboard.lastCheckedAt, state.dashboard.generatedAt)
+        );
+      }
+    } catch (error) {
+      // 작은 확인이 실패하면 전체를 받아 본다. 실패 표시와 재시도는 loadDashboard 가 맡는다.
+      needFull = true;
+    }
+  }
+
+  if (needFull) {
+    // loadDashboard 는 성공하든 실패하든 다음 확인을 스스로 예약한다.
+    await loadDashboard();
+    return;
+  }
+
+  scheduleDashboardRefresh();
 }
 
 function collectIntervalMs() {
@@ -2173,11 +2222,11 @@ function watchTabReturn() {
       return;
     }
 
-    // 돌아왔을 때가 "지금 값을 보겠다"는 순간이므로 저장된 최신값을 다시 읽는다.
+    // 돌아왔을 때가 "지금 값을 보겠다"는 순간이므로 저장된 최신값을 다시 확인한다.
     const age = Date.now() - Date.parse(state.dashboard.lastCheckedAt || "");
 
     if (!Number.isFinite(age) || age >= collectIntervalMs()) {
-      loadDashboard();
+      refreshIfChanged();
     }
   });
 }
