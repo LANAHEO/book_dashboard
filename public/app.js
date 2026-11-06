@@ -2150,9 +2150,11 @@ function scheduleDashboardRefresh() {
   const delay = state.dashboard ? Math.max(collectIntervalMs(), 60_000) : 30_000;
 
   state.refreshTimer = window.setTimeout(() => {
-    // 열어 둔 화면도 주기마다 서점을 직접 확인한다. 저장된 값을 다시 읽기만
-    // 하면 수집이 늦어질 때 화면도 같이 늦는다.
-    loadDashboard("quick");
+    // 저장된 순위표를 다시 읽기만 한다. 예전에는 여기서 서점까지 확인시켰는데
+    // (refresh=quick), 그러면 열어 둔 탭 하나하나가 5분마다 서버에게 서점을
+    // 돌게 해서 수집기를 하나 더 돌리는 셈이었다 — Vercel CPU 한도를 넘긴 원인
+    // 중 하나다. 수집은 이제 5분마다 따로 돌므로 읽기만 해도 늦지 않는다.
+    loadDashboard();
   }, delay);
 }
 
@@ -2171,11 +2173,11 @@ function watchTabReturn() {
       return;
     }
 
-    // 돌아왔을 때가 "지금 값을 보겠다"는 순간이므로 서점까지 확인한다.
+    // 돌아왔을 때가 "지금 값을 보겠다"는 순간이므로 저장된 최신값을 다시 읽는다.
     const age = Date.now() - Date.parse(state.dashboard.lastCheckedAt || "");
 
     if (!Number.isFinite(age) || age >= collectIntervalMs()) {
-      loadDashboard("quick");
+      loadDashboard();
     }
   });
 }
@@ -2404,19 +2406,13 @@ function start() {
     showIdleBadge();
   }
 
-  // 저장된 순위표로 먼저 그리고, 그다음에 서점을 확인한다.
-  //
-  // 확인을 loadDashboard 안의 "첫 로드" 분기에 걸어 뒀더니 한 번도 실행되지
-  // 않았다. 위에서 부트스트랩으로 그리면서 hasLoadedOnce 를 이미 켜 버리기
-  // 때문이다. 열릴 때 확인하는 일은 여는 쪽에서 직접 시키는 것이 맞다.
-  //
-  // loadDashboard 는 실패해도 예외를 던지지 않으므로 뒤의 확인은 언제나 돈다.
-  loadDashboard()
-    .then(() => {
-      // 부트스트랩이 없어 여기서 처음 그린 경우에도 되돌려 준다.
-      restoreScrollOnce();
-      return loadDashboard("quick");
-    });
+  // 저장된 순위표 전체를 받는다. 열릴 때 서점까지 확인시키던 두 번째 요청
+  // (refresh=quick)은 뺐다 — 화면은 이제 서점에 가지 않는다(scheduleDashboardRefresh 참고).
+  // loadDashboard 는 실패해도 예외를 던지지 않는다.
+  loadDashboard().then(() => {
+    // 부트스트랩이 없어 여기서 처음 그린 경우에도 되돌려 준다.
+    restoreScrollOnce();
+  });
 }
 
 start();

@@ -62,11 +62,87 @@ const SOURCE_CACHE_DIR = path.join(__dirname, ".cache", "rankings");
 const FILE_CACHE_ENABLED = !process.env.VERCEL;
 const DASHBOARD_SNAPSHOT_ID = "latest";
 
-// 화면에 "얼마나 자주 가져오는지"로 적히는 값. 아래 REALTIME_REFRESH_MS 는
-// 캐시가 언제 낡는지를 정하는 값일 뿐이고, 실제로 수집을 부르는 주기는 밖에
-// 있다(.github/workflows/collect.yml 의 INTERVAL). 예전에는 배지가 캐시 수명을
-// 수집 주기인 양 "실시간 60분"이라고 적었다 — 10분마다 부르고 있는데도.
-// 두 파일에 나뉘어 있으니 collect.yml 을 고치면 여기도 같이 고쳐야 한다.
+// ── 누가 어느 서점을 모으는가 ─────────────────────────────────────────────
+//
+// 2026-11-06 Vercel 이 배포를 통째로 멈췄다. 무료 한도인 Active CPU 4시간을
+// 수집이 6시간 25분 써서다. 그래서 Vercel 은 화면만 보여 주고 수집은 밖으로 뺐다.
+//
+// 그런데 밖(GitHub Actions 러너, 미국)에서 시험해 보니 교보 59/59·예스24 84/84 는
+// 받아졌지만 알라딘은 91/91 이 403 이었다. 알라딘은 해외에서 오는 접속을
+// CloudFront 에서 막는다 — 같은 주소가 한국에서는 원 서버(IIS)가 바로 답한다.
+// 그래서 수집이 셋으로 나뉜다.
+//
+//   GitHub Actions  교보·예스24 를 모으고, 화면이 읽는 스냅샷을 만든다.
+//   PC 로컬 서버     알라딘과 상상스퀘어 신간 목록(알라딘 검색을 쓴다)만 모아
+//                   목록 행으로 남긴다. 스냅샷은 만들지 않는다.
+//   Vercel           서점에 가지 않고 스냅샷도 쓰지 않는다. 읽어서 보여 주기만 한다.
+//
+// 스냅샷을 쓰는 곳은 하나여야 한다. 둘이 쓰면 순위 이력이 몇 분 간격으로 두 번
+// 남아 ▲▼ 의 비교 기준이 "방금"으로 당겨진다. 맡지 않은 서점의 값은 그 서점을
+// 맡은 쪽이 남긴 행을 읽어서 쓴다.
+//
+// 둘 다 환경변수로 정한다. .env 는 서버가 뜬 뒤에 읽히므로 상수로 굳히지 않고
+// 그때그때 읽는다.
+//   COLLECT_STORES   이 프로세스가 서점에서 직접 받아 오는 서점(쉼표로 구분).
+//                    비우면 전부 — 단 Vercel 에서는 비우면 없음. "none" 은 없음.
+//   SNAPSHOT_WRITER  0 이면 스냅샷을 쓰지 않는다. 비우면 Vercel 만 0.
+const ON_VERCEL = Boolean(process.env.VERCEL);
+
+// 상상스퀘어 신간 목록은 알라딘 검색에서 온다. 알라딘을 맡은 쪽이 같이 맡는다.
+const CATALOG_STORE_ID = "aladin";
+
+function collectStoreIds() {
+  const raw = cleanEnvValue(process.env.COLLECT_STORES).toLowerCase();
+
+  if (!raw) {
+    // null 은 "전부"다.
+    return ON_VERCEL ? new Set() : null;
+  }
+
+  if (raw === "none") {
+    return new Set();
+  }
+
+  return new Set(
+    raw
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean)
+  );
+}
+
+function ownsStore(storeId) {
+  const owned = collectStoreIds();
+  return owned === null || owned.has(storeId);
+}
+
+function ownsAnyStore() {
+  const owned = collectStoreIds();
+  return owned === null || owned.size > 0;
+}
+
+function isSnapshotWriter() {
+  const raw = cleanEnvValue(process.env.SNAPSHOT_WRITER).toLowerCase();
+
+  if (!raw) {
+    return !ON_VERCEL;
+  }
+
+  return !["0", "false", "no", "off"].includes(raw);
+}
+
+function describeCollectRole() {
+  const owned = collectStoreIds();
+  const stores = owned === null ? "전부" : owned.size ? [...owned].join(",") : "없음";
+
+  return `서점=${stores} 스냅샷=${isSnapshotWriter() ? "씀" : "안 씀"}`;
+}
+
+// 화면에 "얼마나 자주 가져오는지"로 적히는 값이자, 실제 수집 주기다.
+// GitHub Actions 수집기(scripts/collector.js)와 PC 의 알라딘 수집이 모두 이 값을
+// 읽어 시계의 5분 경계에 맞춰 돈다. 아래 REALTIME_REFRESH_MS 는 캐시가 언제
+// 낡는지를 정하는 값일 뿐이다 — 예전에는 배지가 그 값을 수집 주기인 양
+// "실시간 60분"이라고 적었다.
 const COLLECT_INTERVAL_MINUTES = 5;
 
 // 서점 실시간은 약 1시간, 일·주간은 더 느리게 바뀌므로 캐시 수명을 맞춤.
@@ -2484,11 +2560,27 @@ async function fetchPublisherCatalog() {
 
 let publisherCatalogCache = null;
 
-async function loadPublisherCatalog() {
+async function loadPublisherCatalog(options = {}) {
   const now = Date.now();
 
-  if (publisherCatalogCache && publisherCatalogCache.expiresAt > now) {
+  if (!options.force && publisherCatalogCache && publisherCatalogCache.expiresAt > now) {
     return publisherCatalogCache.books;
+  }
+
+  // 알라딘을 맡지 않은 쪽(Actions)은 알라딘 검색에 가지 않는다. PC 가 남긴 목록을 읽는다.
+  if (!ownsStore(CATALOG_STORE_ID)) {
+    const persisted = await readPersistedSource(FOCUS_CATALOG_ID).catch(() => null);
+
+    if (persisted && Array.isArray(persisted.payload.items) && persisted.payload.items.length) {
+      publisherCatalogCache = { books: persisted.payload.items, expiresAt: foreignExpiresAt(now) };
+      return publisherCatalogCache.books;
+    }
+
+    if (publisherCatalogCache) {
+      return publisherCatalogCache.books;
+    }
+
+    return FOCUS_BOOK_TITLES.map((title) => ({ title, publishedAt: "", link: "" }));
   }
 
   try {
@@ -2794,6 +2886,158 @@ async function loadListForClient(id) {
   return loadSource(id);
 }
 
+// ── 맡지 않은 서점의 목록 ─────────────────────────────────────────────────
+//
+// 그 서점을 맡은 쪽이 남긴 행을 그대로 쓴다. 유효기간은 보지 않는다 — 맡은 쪽이
+// 멈췄다면 화면에 그 행의 수집 시각이 그대로 드러나는 것이 맞다. 대신 다른 값을
+// 지어내지도 않는다.
+//
+// 메모리에는 짧게만 둔다(화면용 프로세스는 1분이면 새 값을 다시 읽는다). 다만
+// 스냅샷을 만드는 수집기는 바뀐 행만 골라 다시 읽으므로(refreshForeignSources)
+// 그동안은 버리지 않는다. 행 하나가 50KB 안팎이라, 5분마다 91개를 통째로 다시
+// 읽으면 Supabase 전송량이 하루 1GB 를 넘는다.
+const FOREIGN_CACHE_MS = 60 * 1000;
+let foreignTracking = false;
+
+function foreignExpiresAt(now) {
+  return foreignTracking ? Number.POSITIVE_INFINITY : now + FOREIGN_CACHE_MS;
+}
+
+async function loadForeignSource(definition, cached, now) {
+  const persisted = await readPersistedSource(definition.id).catch(() => null);
+
+  if (persisted) {
+    cache.set(definition.id, { payload: persisted.payload, expiresAt: foreignExpiresAt(now) });
+    return { ...persisted.payload, cacheState: "foreign" };
+  }
+
+  // 읽기에 실패했으면 들고 있던 것이라도 낸다.
+  if (cached) {
+    return { ...cached.payload, cacheState: "foreign-cached" };
+  }
+
+  // 아무도 모은 적이 없으니 수집 시각도 비운다. buildPayload 는 "지금"을 적는데,
+  // 그대로 두면 화면이 방금 확인한 것처럼 보인다.
+  return {
+    ...buildPayload(
+      definition,
+      { items: [], sourceStamp: "" },
+      { error: "이 서점을 맡은 수집기가 아직 남긴 값이 없습니다." }
+    ),
+    updatedAt: "",
+    checkedAt: "",
+    cacheState: "foreign-empty"
+  };
+}
+
+// 행마다 "값이 바뀐 시각"만 받는다. 목록 본문은 받지 않는다.
+// 목록 행은 payload.updatedAt(순위 내용이 바뀐 시각)을, 그 값이 없는 행(신간 목록)은
+// 행을 쓴 시각을 쓴다.
+async function readSourceVersions(ids) {
+  const versions = new Map();
+
+  if (!ids.length) {
+    return versions;
+  }
+
+  if (getSupabaseConfig()) {
+    const rows = await supabaseRequest(
+      `source_snapshots?select=id,updated_at,content:payload->>updatedAt&id=in.(${ids
+        .map(encodeURIComponent)
+        .join(",")})`
+    );
+
+    (Array.isArray(rows) ? rows : []).forEach((row) => {
+      versions.set(row.id, row.content || row.updated_at || "");
+    });
+
+    return versions;
+  }
+
+  // Supabase 없이 돌릴 때(시험)는 같은 폴더의 파일 캐시를 본다.
+  await Promise.all(
+    ids.map(async (id) => {
+      try {
+        const file = getSourceCachePath(id);
+        const [raw, stat] = await Promise.all([fs.readFile(file, "utf8"), fs.stat(file)]);
+        const parsed = JSON.parse(raw);
+        versions.set(id, (parsed.payload && parsed.payload.updatedAt) || stat.mtime.toISOString());
+      } catch (error) {
+        // 행이 없다.
+      }
+    })
+  );
+
+  return versions;
+}
+
+const knownForeignVersions = new Map();
+let foreignSeeded = false;
+
+// 맡지 않은 서점의 값이 바뀌었는지 본다. 스냅샷을 만드는 수집기가 회차마다 부른다.
+//
+// 이게 없으면 PC 가 알라딘을 새로 모아 행을 바꿔도, 교보나 예스24 가 바뀌어
+// 스냅샷을 다시 만들 때까지(길면 한 시간) 화면의 알라딘은 그대로다.
+//
+// 처음 한 번은 지금 스냅샷에 실린 값을 기준으로 삼는다. 그래야 수집기가 꺼져 있던
+// 동안 PC 가 바꿔 놓은 것도 첫 회차에 잡힌다.
+async function refreshForeignSources() {
+  foreignTracking = true;
+
+  const ids = SOURCES.filter((source) => !ownsStore(source.storeId)).map((source) => source.id);
+  const watchCatalog = !ownsStore(CATALOG_STORE_ID);
+
+  if (watchCatalog) {
+    ids.push(FOCUS_CATALOG_ID);
+  }
+
+  if (!ids.length) {
+    return { changed: false, changedIds: [] };
+  }
+
+  if (!foreignSeeded) {
+    foreignSeeded = true;
+    const snapshot = await readDashboardSnapshot().catch(() => null);
+
+    ((snapshot && snapshot.payload && snapshot.payload.sections) || []).forEach((section) => {
+      (section.lists || []).forEach((list) => {
+        if (!ownsStore(list.storeId) && list.updatedAt) {
+          knownForeignVersions.set(list.id, list.updatedAt);
+        }
+      });
+    });
+  }
+
+  const versions = await readSourceVersions(ids);
+  const changedIds = [];
+
+  ids.forEach((id) => {
+    const version = versions.get(id);
+
+    if (!version || knownForeignVersions.get(id) === version) {
+      return;
+    }
+
+    const firstSeen = !knownForeignVersions.has(id);
+    knownForeignVersions.set(id, version);
+
+    // 들고 있던 값을 버려 다음 스냅샷이 새 행을 읽게 한다.
+    if (id === FOCUS_CATALOG_ID) {
+      publisherCatalogCache = null;
+    } else {
+      cache.delete(id);
+    }
+
+    // 신간 목록은 스냅샷에 버전이 없어 처음 본 값을 기준으로 삼는다. 프로세스가
+    // 새로 떴으면 어차피 첫 스냅샷이 저장된 목록을 새로 읽는다.
+    if (!firstSeen || id !== FOCUS_CATALOG_ID) {
+      changedIds.push(id);
+    }
+  });
+
+  return { changed: changedIds.length > 0, changedIds };
+}
+
 async function loadSource(id, options = {}) {
   const definition = sourceById.get(id);
 
@@ -2812,15 +3056,33 @@ async function loadSource(id, options = {}) {
     };
   }
 
+  // 맡지 않은 서점은 서점에 가지 않는다. force 여도 마찬가지다 — 받아 올 수 없는
+  // 곳(Actions 에서 알라딘)을 두드리면 403 만 쌓이고, 실패로 기록되면 멀쩡한 값에
+  // "새 수집에 실패" 표시가 붙는다.
+  if (!ownsStore(definition.storeId)) {
+    return loadForeignSource(definition, cached, now);
+  }
+
+  // 메모리가 빈 프로세스(새로 뜬 수집기, 서버리스)는 저장된 값이 아직 유효하면
+  // 그걸 쓴다. 예전에는 스냅샷을 다시 만들 때마다 여기서 목록 230여 개를 서점에서
+  // 전부 다시 받았다 — 순위가 바뀐 서점은 한 곳뿐인데도. 수집 한 번에 90초가
+  // 걸리고 Vercel CPU 한도를 다 쓴 주된 이유가 이것이다.
+  //
+  // 직전 값은 어차피 필요하다. "이 값이 우리 것이 된 시각"을 이어 가려면
+  // 새로 받은 값과 견줘야 한다.
+  const persisted = cached ? null : await readPersistedSource(id).catch(() => null);
+
+  if (!force && persisted && persisted.expiresAt > now) {
+    cache.set(id, persisted);
+    return {
+      ...persisted.payload,
+      cacheState: "persisted"
+    };
+  }
+
   try {
     const result = await definition.load();
-    // 직전 값을 알아야 "이 값이 우리 것이 된 시각"을 이어 갈 수 있다. 서버리스는
-    // 호출마다 메모리가 비므로, 메모리에 없으면 저장소에서 한 번 읽는다.
-    const previous = cached
-      ? cached.payload
-      : await readPersistedSource(id)
-          .then((entry) => (entry ? entry.payload : null))
-          .catch(() => null);
+    const previous = cached ? cached.payload : persisted ? persisted.payload : null;
     const payload = buildPayload(definition, result, { previous });
     cache.set(id, {
       payload,
@@ -2842,8 +3104,6 @@ async function loadSource(id, options = {}) {
         cacheState: "stale"
       };
     }
-
-    const persisted = await readPersistedSource(id);
 
     if (persisted) {
       cache.set(id, persisted);
@@ -3515,6 +3775,7 @@ async function refreshRealtimeSources(skipIds = new Set(), storeIds = null) {
   const realtimeIds = SOURCES.filter(
     (source) =>
       source.realtime &&
+      ownsStore(source.storeId) &&
       !skipIds.has(source.id) &&
       (!storeIds || storeIds.has(source.storeId))
   ).map((source) => source.id);
@@ -3619,8 +3880,11 @@ function collectRealtimeOnce(options = {}) {
 }
 
 async function probeRealtimeSources() {
+  const probeIds = REALTIME_PROBE_IDS.filter((id) =>
+    ownsStore((sourceById.get(id) || {}).storeId)
+  );
   const results = await Promise.all(
-    REALTIME_PROBE_IDS.map(async (id) => {
+    probeIds.map(async (id) => {
       const before = await lastKnownFingerprint(id);
 
       const storeId = (sourceById.get(id) || {}).storeId || "";
@@ -3648,7 +3912,9 @@ async function probeRealtimeSources() {
 }
 
 async function refreshStandardSources() {
-  const standardIds = SOURCES.filter((source) => !source.realtime).map((source) => source.id);
+  const standardIds = SOURCES.filter(
+    (source) => !source.realtime && ownsStore(source.storeId)
+  ).map((source) => source.id);
   await Promise.all(
     standardIds.map((id) =>
       loadSource(id, { force: true }).catch((error) => {
@@ -3746,7 +4012,76 @@ function rebuildDashboardSnapshot(reason, forceIds = []) {
   return run;
 }
 
+// 시계의 경계에 맞춰 되풀이한다(5분이면 :00 :05 :10 …에 offset 을 더한 때).
+// 앞 회차가 길어져도 다음 경계로 넘어갈 뿐 겹치지 않고, 실패해도 다음을 건다.
+function repeatOnTheClock(task, intervalMs, offsetMs) {
+  const scheduleNext = () => {
+    const now = Date.now();
+    let next = Math.floor(now / intervalMs) * intervalMs + offsetMs;
+
+    while (next <= now) {
+      next += intervalMs;
+    }
+
+    setTimeout(async () => {
+      try {
+        await task();
+      } catch (error) {
+        console.error("[scheduler] 회차 실패:", error);
+      } finally {
+        scheduleNext();
+      }
+    }, next - now);
+  };
+
+  scheduleNext();
+}
+
+// 스냅샷을 쓰지 않는 수집 — PC 가 알라딘만 맡을 때다. 목록 행만 남기고, 화면에
+// 올리는 일(스냅샷)은 GitHub Actions 수집기가 맡는다. 그쪽이 회차마다 바뀐 행을
+// 찾아 읽는다(refreshForeignSources).
+//
+// 주기는 Actions 와 같은 5분이다. 알라딘만 늦으면 세 서점의 수집 시각이 어긋난다.
+// Actions 는 경계 + 60초에 돌므로, 이쪽은 경계에 맞춰 먼저 끝내 둔다.
+function startRowOnlySchedulers() {
+  const refreshStandardAndCatalog = () =>
+    Promise.allSettled([
+      refreshStandardSources(),
+      ownsStore(CATALOG_STORE_ID) ? loadPublisherCatalog({ force: true }) : null
+    ]);
+
+  const realtimeTick = async () => {
+    const result = await collectRealtimeOnce();
+    const changed = result.probe.results
+      .filter((entry) => entry.changed)
+      .map((entry) => entry.storeId);
+
+    console.log(
+      `[scheduler] 실시간 확인 — ${changed.length ? `${changed.join(",")} 바뀜, 다시 받음` : "바뀐 곳 없음"}`
+    );
+  };
+
+  setTimeout(() => {
+    Promise.allSettled([refreshRealtimeSources(), refreshStandardAndCatalog()]).then(() => {
+      console.log("[scheduler] 첫 수집을 마쳤습니다. 이제 5분마다 확인합니다.");
+      repeatOnTheClock(realtimeTick, COLLECT_INTERVAL_MINUTES * 60 * 1000, 0);
+    });
+  }, 1000);
+
+  setInterval(refreshStandardAndCatalog, STANDARD_REFRESH_MS);
+}
+
 function startSourceSchedulers() {
+  if (!ownsAnyStore()) {
+    console.log("[scheduler] 맡은 서점이 없어 수집하지 않습니다.");
+    return;
+  }
+
+  if (!isSnapshotWriter()) {
+    startRowOnlySchedulers();
+    return;
+  }
+
   // Rebuild once both passes are done so the first snapshot carries realtime
   // and standard lists together.
   setTimeout(() => {
@@ -3771,6 +4106,87 @@ function startSourceSchedulers() {
       })
       .then(() => rebuildDashboardSnapshot("standard"));
   }, STANDARD_REFRESH_MS);
+}
+
+// 수집 한 회차 — 맡은 서점을 확인하고, 무엇이든 바뀌었으면 스냅샷을 다시 만든다.
+// GitHub Actions 수집기(scripts/collector.js)가 5분마다 부른다.
+//
+// scope=realtime  맡은 서점의 종합 실시간만 먼저 찔러 보고, 바뀐 서점만 다시 받는다.
+//                 맡지 않은 서점(알라딘)은 그쪽이 남긴 행이 바뀌었는지만 본다.
+// scope=all       맡은 서점의 실시간·일간·주간·월간을 전부 다시 받는다(6시간마다).
+async function runCollection(options = {}) {
+  const scope = options.scope === "all" ? "all" : "realtime";
+  const startedAt = Date.now();
+
+  if (!isSnapshotWriter()) {
+    return {
+      ok: false,
+      status: 409,
+      scope,
+      error: `이 프로세스는 스냅샷을 쓰지 않습니다(${describeCollectRole()}). 스냅샷은 GitHub Actions 수집기가 만듭니다.`
+    };
+  }
+
+  let probe = null;
+  let foreign = { changed: false, changedIds: [] };
+
+  try {
+    foreign = await refreshForeignSources();
+  } catch (error) {
+    // 알라딘 행을 못 읽었다고 교보·예스24 수집을 멈추지 않는다.
+    console.error("[collect] 다른 수집기의 행을 확인하지 못했습니다:", error);
+  }
+
+  if (scope === "all") {
+    await Promise.allSettled([refreshRealtimeSources(), refreshStandardSources()]);
+  } else {
+    // 바뀐 서점만 다시 가져온다. 세 곳은 순위를 갈아 끼우는 시각이 서로
+    // 달라서(교보가 11:00 기준을 올린 순간에도 예스24는 09:00 기준이다),
+    // 한 곳이 바뀌었다고 세 곳을 모두 긁으면 안 바뀐 서점의 수집 시각까지
+    // 지금으로 당겨진다.
+    const result = await collectRealtimeOnce({ force: options.force === true });
+    probe = result.probe;
+
+    // 아무것도 안 바뀌었으면 여기서 끝낸다. 스냅샷을 다시 쓰면 ▲▼ 의
+    // 비교 기준이 방금으로 당겨진다. 대신 확인했다는 기록은 반드시 남긴다 —
+    // 이 길로 끝나면 스냅샷을 안 쓰므로, 없으면 화면에 흔적이 하나도 없다.
+    if (!result.changed && !foreign.changed) {
+      await writeCollectHeartbeat();
+      return {
+        ok: true,
+        scope,
+        skipped: true,
+        reason: "순위가 지난 수집과 같아 건너뛰었습니다.",
+        probe: probe.results,
+        elapsedMs: Date.now() - startedAt
+      };
+    }
+  }
+
+  await writeCollectHeartbeat();
+  const payload = await rebuildDashboardSnapshot(`collect:${scope}`);
+  // 저장에 실패했으면 수집은 실패한 것이다. 만들어 놓고 못 남겼으면 다음
+  // 요청부터는 예전 값이 나가므로, 부른 쪽에 성공이라고 말하면 안 된다.
+  const storageError = payload ? payload.storageError || "" : "";
+  const ok = Boolean(payload) && !storageError;
+
+  // 스냅샷을 못 남겼으면 방금 알아챈 알라딘 변화도 화면에 안 실린 것이다.
+  // 알던 버전을 잊어서 다음 회차가 저장된 스냅샷과 다시 견주게 한다.
+  if (!ok) {
+    knownForeignVersions.clear();
+    foreignSeeded = false;
+  }
+
+  return {
+    ok,
+    scope,
+    skipped: false,
+    storageError: storageError || undefined,
+    probe: probe ? probe.results : undefined,
+    foreignChanged: foreign.changedIds,
+    generatedAt: payload ? payload.generatedAt : null,
+    elapsedMs: Date.now() - startedAt
+  };
 }
 
 // 요청 처리를 함수로 떼어 둔다. 상시 서버(로컬·Render)는 createServer로 감싸 쓰고,
@@ -3812,7 +4228,14 @@ async function handleRequest(request, response) {
     // 전수 수집(refresh=realtime)은 예순 개가 넘어 90초가 걸리고 서점을
     // 몰아쳐 403 을 부른다. 이 길은 종합 실시간 세 개만 받아 보고 바뀐 서점만
     // 다시 받으므로, 조용할 때는 요청 세 번으로 끝난다.
-    if (refreshParam === "quick") {
+    //
+    // 다만 스냅샷을 쓰는 프로세스에서만이다. Vercel 과 PC(알라딘 전용)는 서점에
+    // 가지 않는다 — 열어 둔 탭마다 5분에 한 번씩 서점을 돌던 이 길이 수집기를
+    // 하나 더 돌리는 것과 같았고, Vercel CPU 한도를 넘긴 원인 중 하나였다.
+    // 화면도 이제 quick 을 보내지 않는다. 남은 것은 단독 실행(전부 맡음)용이다.
+    const canCollect = isSnapshotWriter() && ownsAnyStore();
+
+    if (refreshParam === "quick" && canCollect) {
       try {
         const result = await collectRealtimeOnce();
 
@@ -3827,7 +4250,7 @@ async function handleRequest(request, response) {
       }
     }
 
-    const forceIds = getForcedSourceIds(refreshParam);
+    const forceIds = canCollect ? getForcedSourceIds(refreshParam) : [];
 
     if (!forceIds.length) {
       try {
@@ -3852,6 +4275,14 @@ async function handleRequest(request, response) {
       } catch (error) {
         console.error("[storage] dashboard read failed:", error);
       }
+    }
+
+    // 저장된 순위표가 없을 때 그 자리에서 만드는 것도 스냅샷을 쓰는 쪽만 한다.
+    if (!canCollect) {
+      jsonResponse(response, 503, {
+        error: "저장된 순위표를 읽지 못했습니다. 수집기가 순위표를 남기면 다시 보입니다."
+      });
+      return;
     }
 
     // Through the single-flight so a manual refresh coalesces with a scheduled
@@ -3992,59 +4423,19 @@ async function handleRequest(request, response) {
       return;
     }
 
-    // 기본은 실시간만 — 매시 호출되는 쪽이라 전수를 돌리면 서점 부하가 커진다.
-    // 일반 목록은 scope=all 로 6시간마다 따로 부른다.
+    // 기본은 실시간만. 일반 목록은 scope=all 로 6시간마다 따로 부른다.
+    // Vercel 에서는 스냅샷을 쓰지 않으므로 409 로 거절된다 — 수집은 GitHub
+    // Actions 수집기가 직접 돈다(runCollection 위 설명).
     const scope = url.searchParams.get("scope") === "all" ? "all" : "realtime";
     const startedAt = Date.now();
 
     try {
-      let probe = null;
-
-      if (scope === "all") {
-        await Promise.allSettled([refreshRealtimeSources(), refreshStandardSources()]);
-      } else {
-        // 바뀐 서점만 다시 가져온다. 세 곳은 순위를 갈아 끼우는 시각이 서로
-        // 달라서(교보가 11:00 기준을 올린 순간에도 예스24는 09:00 기준이다),
-        // 한 곳이 바뀌었다고 세 곳을 모두 긁으면 안 바뀐 서점의 수집 시각까지
-        // 지금으로 당겨진다.
-        const result = await collectRealtimeOnce({
-          force: url.searchParams.get("force") === "1"
-        });
-        probe = result.probe;
-
-        // 아무 서점도 안 바뀌었으면 여기서 끝낸다. 스냅샷을 다시 쓰면 ▲▼ 의
-        // 비교 기준이 방금으로 당겨진다. 대신 확인했다는 기록은 반드시 남긴다 —
-        // 이 길로 끝나면 스냅샷을 안 쓰므로, 없으면 화면에 흔적이 하나도 없다.
-        if (!result.changed) {
-          await writeCollectHeartbeat();
-          jsonResponse(response, 200, {
-            ok: true,
-            scope,
-            skipped: true,
-            reason: "세 서점 모두 순위가 지난 수집과 같아 건너뛰었습니다.",
-            probe: probe.results,
-            elapsedMs: Date.now() - startedAt
-          });
-          return;
-        }
-      }
-
-      await writeCollectHeartbeat();
-      const payload = await rebuildDashboardSnapshot(`collect:${scope}`);
-      // 저장에 실패했으면 수집은 실패한 것이다. 만들어 놓고 못 남겼으면 다음
-      // 요청부터는 예전 값이 나가므로, 부른 쪽(크론)에 성공이라고 말하면 안 된다.
-      const storageError = payload ? payload.storageError || "" : "";
-      const ok = Boolean(payload) && !storageError;
-
-      jsonResponse(response, ok ? 200 : 500, {
-        ok,
+      const { status, ...result } = await runCollection({
         scope,
-        skipped: false,
-        storageError: storageError || undefined,
-        probe: probe ? probe.results : undefined,
-        generatedAt: payload ? payload.generatedAt : null,
-        elapsedMs: Date.now() - startedAt
+        force: url.searchParams.get("force") === "1"
       });
+
+      jsonResponse(response, status || (result.ok ? 200 : 500), result);
     } catch (error) {
       console.error("[collect] failed:", error);
       jsonResponse(response, 500, {
@@ -4129,9 +4520,17 @@ async function startStandaloneServer() {
   server.listen(PORT, HOST, () => {
     console.log(`Book ranking dashboard ready at http://${HOST}:${PORT}`);
     console.log(`[storage] supabase=${storageLabel}`);
-    console.log(
-      `[scheduler] realtime=${REALTIME_REFRESH_MS / 60000}m standard=${STANDARD_REFRESH_MS / 3600000}h`
-    );
+    console.log(`[collect] ${describeCollectRole()}`);
+
+    if (ownsAnyStore()) {
+      // 스냅샷을 쓰지 않는 쪽(PC 의 알라딘)은 실시간을 5분마다 확인한다.
+      const realtimeMinutes = isSnapshotWriter()
+        ? REALTIME_REFRESH_MS / 60000
+        : COLLECT_INTERVAL_MINUTES;
+      console.log(
+        `[scheduler] realtime=${realtimeMinutes}m standard=${STANDARD_REFRESH_MS / 3600000}h`
+      );
+    }
   });
 
   return server;
@@ -4146,6 +4545,9 @@ module.exports = handleServerlessRequest;
 module.exports.handleRequest = handleRequest;
 module.exports.handleServerlessRequest = handleServerlessRequest;
 module.exports.ensureEnv = ensureEnv;
+module.exports.runCollection = runCollection;
+module.exports.describeCollectRole = describeCollectRole;
+module.exports.COLLECT_INTERVAL_MINUTES = COLLECT_INTERVAL_MINUTES;
 
 // Vercel은 이 파일을 require해서 핸들러만 쓰므로 리스너를 열면 안 된다.
 // 직접 실행됐을 때만 상시 서버로 뜬다.

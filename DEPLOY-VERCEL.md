@@ -16,47 +16,50 @@ Book Radar는 원래 상시 실행되는 Node HTTP 서버였다. Vercel 함수�
 - 수집을 `POST/GET /api/collect`로 밖에서 부를 수 있게 했다. 서버리스에는
   `setInterval`이 없으므로 스케줄은 크론이 들고 있어야 한다.
 
-## 크론: 플랜에 따라 갈린다
+## 수집: 누가 무엇을 모으나
 
-| | 크론 최소 주기 | 함수 실행 시간 |
+**Vercel은 수집하지 않는다.** 화면과 API만 내주고, 서점에도 가지 않고 스냅샷도 쓰지 않는다.
+
+2026-11-06에 Vercel이 배포를 통째로 멈췄다(`402 DEPLOYMENT_DISABLED`). Hobby 무료 한도인
+Active CPU 4시간을 수집이 6시간 25분 써서다. 원인은 두 가지였다.
+
+- `/api/collect`가 스냅샷을 다시 만들 때마다 목록 230여 개를 서점에서 전부 다시 받았다
+  (서버리스는 메모리가 비어 있어서). 지금은 저장된 값이 유효하면 그걸 쓴다.
+- 화면이 열려 있는 동안 탭마다 5분에 한 번 `?refresh=quick`으로 서점을 돌게 했다.
+  지금 화면은 저장된 값만 읽는다.
+
+수집은 셋으로 나뉜다. 알라딘이 해외 접속을 CloudFront에서 막기 때문이다 — GitHub
+Actions 러너(미국)에서 시험하니 교보 59/59·예스24 84/84는 받아졌고 알라딘은 91/91이 403이었다.
+
+| 어디서 | 무엇을 | 설정 |
 |---|---|---|
-| Hobby | **하루 1회** | 300초 |
-| Pro | 1분 | 300초 (확장 시 최대 1800초) |
+| GitHub Actions (`collect.yml` → `scripts/collector.js`) | 교보·예스24 수집, **스냅샷 작성(유일)** | `COLLECT_STORES=kyobo,yes24` (워크플로에 적혀 있음) |
+| PC 로컬 서버 (`npm start`) | 알라딘·상상스퀘어 신간 목록 수집, 목록 행만 저장 | `.env`에 `COLLECT_STORES=aladin`, `SNAPSHOT_WRITER=0` |
+| Vercel | 읽기만 | 설정 없음(`VERCEL`이면 기본이 읽기 전용) |
 
-전수 수집은 40초 안에 끝나므로 **실행 시간은 어느 플랜에서도 문제가 없다.**
-문제는 주기다. Hobby에서 `10 * * * *` 같은 매시 표현식은 **배포 자체가 실패**한다
-(`Hobby accounts are limited to daily cron jobs`).
+스냅샷을 쓰는 곳은 하나여야 한다. 둘이 쓰면 순위 이력이 몇 분 간격으로 두 번 남아
+▲▼ 비교 기준이 "방금"으로 당겨진다. Actions 수집기는 회차마다 PC가 남긴 알라딘 행이
+바뀌었는지 보고(`payload.updatedAt`만 받아 본다), 바뀌었으면 스냅샷에 싣는다.
 
-### 기본값: GitHub Actions (플랜 무관)
+PC가 꺼져 있으면 알라딘만 그 시각에 멈춰 보인다. 교보·예스24는 계속 돈다.
 
-`vercel.json`에 `crons`를 **넣지 않았다.** 매시 표현식은 Hobby에서 배포를 실패시키므로,
-플랜을 모르는 상태에서 첫 배포가 깨지지 않게 하는 쪽을 골랐다. 스케줄은 이미 들어 있는
-`.github/workflows/collect.yml`이 맡는다 — Hobby·Pro 모두 동작한다.
+### GitHub에 넣을 것
 
-설정할 것:
+리포 **Settings → Secrets and variables → Actions**
 
-1. 리포 **Settings → Secrets and variables → Actions**
-   - 시크릿 `COLLECT_SECRET`: 아무 긴 임의 문자열
-   - 변수 `DASHBOARD_BASE_URL`: 배포된 주소 — 지금은 `https://book-dashboard-gilt.vercel.app`
-2. Vercel 환경변수에도 같은 값으로 `COLLECT_SECRET`을 넣는다.
+- 시크릿 `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`: 로컬 `.env`와 같은 값
+- 변수 `DASHBOARD_BASE_URL`(선택): 순위 대조 검사가 읽을 배포 주소. 없으면 검사만 건너뛴다.
 
-GitHub Actions 크론도 정시에 딱 맞지는 않는다(수 분 지연). 순위가 시간 단위로
-바뀌므로 실용상 문제는 없다.
+`COLLECT_SECRET`은 이제 쓰지 않는다. `/api/collect`는 Vercel에서 409로 거절한다.
 
-### Pro 플랜이라면 Vercel Cron으로 바꿔도 된다
+### 주기
 
-Pro는 분 단위 크론이 되므로 GitHub Actions 없이 Vercel이 직접 부를 수 있다.
-`vercel.json`에 아래를 넣고 환경변수 `CRON_SECRET`을 설정하면 Vercel이
-`Authorization: Bearer`로 보내 준다. 그 뒤 워크플로 파일은 지운다.
+Actions 수집기는 시계의 5분 경계 + 60초(:01 :06 …)에, PC의 알라딘은 경계(:00 :05 …)에 돈다.
+알라딘이 먼저 끝나 있어야 같은 회차의 스냅샷에 실린다. 전수 수집은 UTC 00·06·12·18시.
+값은 `server.js`의 `COLLECT_INTERVAL_MINUTES` 하나다.
 
-```json
-"crons": [
-  { "path": "/api/collect?scope=realtime", "schedule": "10 * * * *" },
-  { "path": "/api/collect?scope=all", "schedule": "20 */6 * * *" }
-]
-```
-
-Hobby에서 이걸 넣으면 `Hobby accounts are limited to daily cron jobs` 로 배포가 실패한다.
+Hobby 크론은 하루 1회라 쓰지 않는다. GitHub 예약도 정시를 지키지 않아서, 한 번 뜬 실행이
+330분 동안 살아 있으며 스스로 5분마다 돌고 끝날 때 다음 실행을 띄운다(`collect.yml` 설명).
 
 ## 환경변수
 
@@ -66,7 +69,6 @@ Vercel **Settings → Environment Variables**에 넣는다.
 |---|---|---|
 | `SUPABASE_URL` | `https://zodrgrrywbzfdlziiwif.supabase.co` | 스냅샷·순위 이력 저장소 |
 | `SUPABASE_SERVICE_ROLE_KEY` | 로컬 `.env`의 `sb_secret_...` | 같음 |
-| `COLLECT_SECRET` 또는 `CRON_SECRET` | 임의의 긴 문자열 | 수집 트리거 인증 |
 
 `SUPABASE_URL`은 **API 주소**여야 한다. 브라우저 대시보드 주소
 (`supabase.com/dashboard/project/...`)를 넣으면 연결이 조용히 실패한다 — 실제로 한 번
@@ -93,8 +95,7 @@ curl -s "$BASE/api/health"        # supabase: true 여야 한다
 curl -s -o /dev/null -w "%{http_code}\n" "$BASE/"         # 200
 curl -s -o /dev/null -w "%{http_code}\n" "$BASE/landing"  # 200
 
-# 첫 수집을 손으로 한 번 돌린다(크론을 기다리지 않아도 된다)
-curl -s -H "Authorization: Bearer $COLLECT_SECRET" "$BASE/api/collect?scope=all"
+# Vercel 은 수집하지 않는다. 첫 수집은 Actions 의 "순위 수집" 워크플로를 scope=all 로 손으로 돌린다.
 ```
 
 `/api/health`의 `supabase`가 `false`면 `supabaseError`에 이유가 적혀 있다.
