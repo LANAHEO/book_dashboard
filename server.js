@@ -2930,9 +2930,9 @@ async function loadForeignSource(definition, cached, now) {
   };
 }
 
-// 행마다 "값이 바뀐 시각"만 받는다. 목록 본문은 받지 않는다.
-// 목록 행은 payload.updatedAt(순위 내용이 바뀐 시각)을, 그 값이 없는 행(신간 목록)은
-// 행을 쓴 시각을 쓴다.
+// 행마다 "값이 바뀐 시각"과 "마지막으로 확인한 시각"만 받는다. 목록 본문은 받지 않는다.
+// 바뀐 시각은 payload.updatedAt(순위 내용이 바뀐 시각)이고, 그 값이 없는 행(신간
+// 목록)은 행을 쓴 시각을 쓴다.
 async function readSourceVersions(ids) {
   const versions = new Map();
 
@@ -2942,13 +2942,16 @@ async function readSourceVersions(ids) {
 
   if (getSupabaseConfig()) {
     const rows = await supabaseRequest(
-      `source_snapshots?select=id,updated_at,content:payload->>updatedAt&id=in.(${ids
+      `source_snapshots?select=id,updated_at,content:payload->>updatedAt,checked:payload->>checkedAt&id=in.(${ids
         .map(encodeURIComponent)
         .join(",")})`
     );
 
     (Array.isArray(rows) ? rows : []).forEach((row) => {
-      versions.set(row.id, row.content || row.updated_at || "");
+      versions.set(row.id, {
+        content: row.content || row.updated_at || "",
+        checked: row.checked || ""
+      });
     });
 
     return versions;
@@ -2961,7 +2964,11 @@ async function readSourceVersions(ids) {
         const file = getSourceCachePath(id);
         const [raw, stat] = await Promise.all([fs.readFile(file, "utf8"), fs.stat(file)]);
         const parsed = JSON.parse(raw);
-        versions.set(id, (parsed.payload && parsed.payload.updatedAt) || stat.mtime.toISOString());
+        const payload = parsed.payload || {};
+        versions.set(id, {
+          content: payload.updatedAt || stat.mtime.toISOString(),
+          checked: payload.checkedAt || ""
+        });
       } catch (error) {
         // 행이 없다.
       }
@@ -2972,6 +2979,7 @@ async function readSourceVersions(ids) {
 }
 
 const knownForeignVersions = new Map();
+const knownForeignChecked = new Map();
 let foreignSeeded = false;
 
 // 맡지 않은 서점의 값이 바뀌었는지 본다. 스냅샷을 만드는 수집기가 회차마다 부른다.
@@ -3012,14 +3020,33 @@ async function refreshForeignSources() {
   const changedIds = [];
 
   ids.forEach((id) => {
-    const version = versions.get(id);
+    const entry = versions.get(id);
 
-    if (!version || knownForeignVersions.get(id) === version) {
+    if (!entry || !entry.content) {
       return;
     }
 
+    // 순위는 같고 확인 시각만 새로워졌다. 이것만으로 스냅샷을 다시 쓰지는 않는다
+    // (▲▼ 기준이 당겨진다). 대신 들고 있던 값을 버려서, 다음에 스냅샷을 만들 때
+    // 새 확인 시각이 실리게 한다. 안 그러면 주간처럼 순위가 며칠 그대로인 목록은
+    // 화면의 "우리 수집"이 PC 가 마지막으로 순위를 바꾼 때에 멈춰 있고, 순위 대조
+    // 검사가 그걸 "수집이 멈췄다"로 읽는다.
+    if (knownForeignVersions.get(id) === entry.content) {
+      if (entry.checked && knownForeignChecked.get(id) !== entry.checked) {
+        knownForeignChecked.set(id, entry.checked);
+
+        if (id !== FOCUS_CATALOG_ID) {
+          cache.delete(id);
+        }
+      }
+
+      return;
+    }
+
+    const version = entry.content;
     const firstSeen = !knownForeignVersions.has(id);
     knownForeignVersions.set(id, version);
+    knownForeignChecked.set(id, entry.checked);
 
     // 들고 있던 값을 버려 다음 스냅샷이 새 행을 읽게 한다.
     if (id === FOCUS_CATALOG_ID) {
@@ -4174,6 +4201,7 @@ async function runCollection(options = {}) {
   // 알던 버전을 잊어서 다음 회차가 저장된 스냅샷과 다시 견주게 한다.
   if (!ok) {
     knownForeignVersions.clear();
+    knownForeignChecked.clear();
     foreignSeeded = false;
   }
 
