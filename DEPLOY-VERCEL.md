@@ -18,6 +18,10 @@ Book Radar는 원래 상시 실행되는 Node HTTP 서버였다. Vercel 함수�
 
 ## 수집: 누가 무엇을 모으나
 
+> **2026-11 변경:** 수집은 상상스퀘어 EKS(`external/book-collector`)로 옮기는 중이다.
+> 배포 방법과 전환 상태는 [DEPLOY.md "수집기는 상상스퀘어 EKS에서 돈다"](DEPLOY.md)를 본다.
+> 아래는 전환이 끝나기 전까지 실제로 Supabase에 쓰고 있는 기존 구조다.
+
 **Vercel은 화면 요청으로는 수집하지 않는다.** 서점에 가는 것은 GitHub Actions가 인증을 붙여
 `/api/collect-rows`를 부를 때(알라딘만)뿐이고, 스냅샷은 어떤 경우에도 쓰지 않는다.
 
