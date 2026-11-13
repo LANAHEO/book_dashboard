@@ -15,3 +15,6 @@ Dockerfile
 render.yaml
 start-dashboard.*
 start-public-dashboard.cmd
+
+# EKS 수집기 전용(deploy/collector). 함수 번들에 필요 없다.
+deploy/

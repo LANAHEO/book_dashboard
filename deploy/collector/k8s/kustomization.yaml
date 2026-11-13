@@ -1,0 +1,26 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# 네임스페이스는 여기 적지 않는다. 배포 워크플로가 `kubectl -n <ns>` 로 넣는다.
+
+resources:
+  - deployment.yaml
+
+configMapGenerator:
+  - name: book-collector-config
+    literals:
+      # 1차 테스트: 서점은 실제로 긁되 Supabase 에는 쓰지 않는다.
+      # 지금 수집기(GitHub Actions collect.yml)를 끈 다음에만 "0" 으로 바꾼다.
+      - COLLECT_DRY_RUN=1
+      # 서울 리전이라 알라딘도 직접 받는다. Vercel 에 부탁하지 않는다.
+      - COLLECT_STORES=kyobo,yes24,aladin
+      - VERCEL_COLLECT_STORES=
+      - SNAPSHOT_WRITER=1
+      # TZ 는 주지 않는다. 지금 수집기(Actions 러너)와 같은 UTC 로 돌아야
+      # 6시간 전수 수집 시각(collector.js ALL_SCOPE_HOURS)이 그대로다.
+
+images:
+  # 배포 워크플로가 `kustomize edit set image` 로 ECR 주소와 커밋 태그를 넣는다.
+  - name: book-collector
+    newName: book-collector
+    newTag: local

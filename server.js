@@ -164,7 +164,9 @@ function describeCollectRole() {
   const owned = collectStoreIds();
   const stores = owned === null ? "전부" : owned.size ? [...owned].join(",") : "없음";
 
-  return `서점=${stores} 스냅샷=${isSnapshotWriter() ? "씀" : "안 씀"}`;
+  const writer = isSnapshotWriter() ? (isDryRun() ? "만들되 저장 안 함(dry-run)" : "씀") : "안 씀";
+
+  return `서점=${stores} 스냅샷=${writer}`;
 }
 
 // 화면에 "얼마나 자주 가져오는지"로 적히는 값이자, 실제 수집 주기다.
@@ -849,9 +851,82 @@ function getSupabaseConfig() {
   return { url, key };
 }
 
+// ── 회차 기록 ────────────────────────────────────────────────────────────
+// 수집기가 회차마다 "어느 목록을 받았고 어느 것이 실패했는지, Supabase 에 무엇을
+// 썼는지"를 한 번에 찍으려고 모은다(scripts/collector.js 가 takeRoundStats 로 꺼낸다).
+// 예전에는 목록 하나가 실패해도 loadSource 가 직전 값을 조용히 돌려줘서, 로그에는
+// 회차가 "성공"으로만 남았다.
+//
+// 수집기가 처음 takeRoundStats 를 부른 뒤부터만 센다. 화면 서버(Vercel·로컬)는 이걸 꺼내
+// 가는 쪽이 없어서, 늘 세면 메모리에 끝없이 쌓인다.
+let roundStats = newRoundStats();
+let roundStatsEnabled = false;
+
+function newRoundStats() {
+  return { fetched: [], writes: {} };
+}
+
+function noteFetch(definition, startedAt, outcome, detail = {}) {
+  if (!roundStatsEnabled) {
+    return;
+  }
+
+  roundStats.fetched.push({
+    id: definition.id,
+    storeId: definition.storeId,
+    name: definition.name || definition.id,
+    ok: outcome === "ok",
+    ms: Date.now() - startedAt,
+    ...detail
+  });
+}
+
+function noteWrite(pathname, outcome) {
+  if (!roundStatsEnabled) {
+    return;
+  }
+
+  const table = pathname.split("?")[0];
+  const entry = (roundStats.writes[table] = roundStats.writes[table] || {
+    ok: 0,
+    failed: 0,
+    skipped: 0
+  });
+  entry[outcome] += 1;
+}
+
+function takeRoundStats() {
+  roundStatsEnabled = true;
+  const taken = roundStats;
+  roundStats = newRoundStats();
+  return taken;
+}
+
+// COLLECT_DRY_RUN=1 이면 Supabase 에서 읽기만 하고 쓰지 않는다. 서점은 실제로
+// 긁고 스냅샷도 메모리에서 끝까지 만든다 — 저장 직전에서만 멈춘다.
+// 새 수집 위치(EKS 파드, 작업자 로컬)를 돌려 보는 동안 지금 수집기(GitHub Actions)가
+// 쓰는 값을 덮어쓰지 않으려고 둔다. Supabase 로 가는 요청은 전부 이 함수를 지나므로
+// 여기 한 곳만 막으면 된다.
+function isDryRun() {
+  return ["1", "true", "yes", "on"].includes(
+    cleanEnvValue(process.env.COLLECT_DRY_RUN).toLowerCase()
+  );
+}
+
 async function supabaseRequest(pathname, options = {}) {
   const config = getSupabaseConfig();
   if (!config) {
+    return null;
+  }
+
+  const method = String(options.method || "GET").toUpperCase();
+
+  const isWrite = method !== "GET" && method !== "HEAD";
+
+  // 건너뛴 쓰기는 한 줄씩 찍지 않고 세기만 한다. 전수 회차면 260번이 넘는다 —
+  // 수집기가 회차 끝에 표 이름별 개수로 한 줄 찍는다.
+  if (isWrite && isDryRun()) {
+    noteWrite(pathname, "skipped");
     return null;
   }
 
@@ -867,7 +942,14 @@ async function supabaseRequest(pathname, options = {}) {
 
   if (!response.ok) {
     const body = await response.text();
+    if (isWrite) {
+      noteWrite(pathname, "failed");
+    }
     throw new Error(`Supabase ${response.status}: ${body.slice(0, 200)}`);
+  }
+
+  if (isWrite) {
+    noteWrite(pathname, "ok");
   }
 
   if (response.status === 204) {
@@ -3170,8 +3252,11 @@ async function loadSource(id, options = {}) {
     };
   }
 
+  const fetchStartedAt = Date.now();
+
   try {
     const result = await definition.load();
+    noteFetch(definition, fetchStartedAt, "ok", { items: (result.items || []).length });
     const previous = cached ? cached.payload : persisted ? persisted.payload : null;
     const payload = buildPayload(definition, result, { previous });
     cache.set(id, {
@@ -3185,6 +3270,10 @@ async function loadSource(id, options = {}) {
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    noteFetch(definition, fetchStartedAt, "failed", {
+      error: message.replace(/\s+/g, " ").slice(0, 200),
+      fallback: cached ? "메모리 값" : persisted ? "저장된 값" : "없음"
+    });
 
     if (cached) {
       return {
@@ -4760,6 +4849,8 @@ module.exports.handleServerlessRequest = handleServerlessRequest;
 module.exports.ensureEnv = ensureEnv;
 module.exports.runCollection = runCollection;
 module.exports.describeCollectRole = describeCollectRole;
+module.exports.isDryRun = isDryRun;
+module.exports.takeRoundStats = takeRoundStats;
 module.exports.COLLECT_INTERVAL_MINUTES = COLLECT_INTERVAL_MINUTES;
 
 // Vercel은 이 파일을 require해서 핸들러만 쓰므로 리스너를 열면 안 된다.

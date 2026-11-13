@@ -6,6 +6,11 @@
 // 바뀌었는지 보고 스냅샷에 싣는다(server.js "누가 어느 서점을 모으는가" 참고).
 //
 //   node scripts/collector.js --until <마감 epoch초> [--first-scope all] [--problems <파일>]
+//   node scripts/collector.js --forever     마감 없이 계속 돈다(EKS 파드).
+//   node scripts/collector.js --once        한 회차만 돌고 끝낸다(로컬 확인).
+//
+// COLLECT_DRY_RUN=1 이면 서점은 실제로 긁되 Supabase 에는 쓰지 않는다(server.js isDryRun).
+// COLLECT_ALIVE_FILE 을 주면 회차마다 그 파일을 갱신한다 — 파드 liveness 검사가 본다.
 //
 // 한 프로세스가 마감까지 살아 있으면서 5분마다 돈다. 회차마다 새로 띄우면 메모리가
 // 비어서 매번 Supabase 에서 목록 230여 개(약 11MB)를 다시 읽게 된다.
@@ -26,8 +31,17 @@ function parseArgs(argv) {
   for (let index = 0; index < argv.length; index += 1) {
     const key = argv[index];
 
-    if (key.startsWith("--")) {
-      args[key.slice(2)] = argv[index + 1];
+    if (!key.startsWith("--")) {
+      continue;
+    }
+
+    const next = argv[index + 1];
+
+    // 값 없는 스위치(--once, --forever)도 받는다.
+    if (next === undefined || next.startsWith("--")) {
+      args[key.slice(2)] = true;
+    } else {
+      args[key.slice(2)] = next;
       index += 1;
     }
   }
@@ -67,8 +81,79 @@ let remoteSkipLogged = false;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+// 로그 시각은 한국 시간으로 날짜까지 찍는다. 파드 로그는 며칠씩 이어지고, 보는 사람이
+// 서점 순위가 바뀐 시각(한국 시간)과 바로 견줄 수 있어야 한다.
+const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
+
+function kst(ms = Date.now()) {
+  return new Date(ms + KST_OFFSET_MS).toISOString().slice(0, 19).replace("T", " ");
+}
+
 function stamp() {
-  return new Date().toISOString().slice(11, 19) + "Z";
+  return `${kst()} KST`;
+}
+
+const STORE_LABEL = { kyobo: "교보", yes24: "예스24", aladin: "알라딘" };
+
+// 이 회차에 서점에서 받은 목록과 Supabase 쓰기를 줄여 찍는다(server.js takeRoundStats).
+//   서점  교보 3/3 · 예스24 2/2 · 알라딘 1/1        받은 목록/시도한 목록
+//   저장  source_snapshots 3 · rank_history 1      (dry-run 이면 "건너뜀")
+//   ✖ 실패 [교보] kyobo-realtime (교보 실시간) 4.1초 — HTTP 503 … · 대신 쓴 값: 메모리 값
+function logRoundStats(stats) {
+  const byStore = new Map();
+
+  for (const entry of stats.fetched) {
+    const row = byStore.get(entry.storeId) || { tried: 0, ok: 0, items: 0 };
+    row.tried += 1;
+    row.ok += entry.ok ? 1 : 0;
+    row.items += entry.items || 0;
+    byStore.set(entry.storeId, row);
+  }
+
+  const stores = [...byStore.entries()]
+    .map(([id, row]) => `${STORE_LABEL[id] || id} ${row.ok}/${row.tried}(${row.items}권)`)
+    .join(" · ");
+  console.log(`    서점  ${stores || "받은 목록 없음(바뀐 서점 없음)"}`);
+
+  const writes = Object.entries(stats.writes);
+  if (writes.length) {
+    const dry = server.isDryRun();
+    const text = writes
+      .map(([table, n]) => {
+        const parts = [];
+        if (n.ok) parts.push(`${n.ok}`);
+        if (n.skipped) parts.push(`${n.skipped} 건너뜀`);
+        if (n.failed) parts.push(`${n.failed} 실패`);
+        return `${table} ${parts.join("/")}`;
+      })
+      .join(" · ");
+    console.log(`    저장  ${text}${dry ? "  (dry-run)" : ""}`);
+  }
+
+  const failed = stats.fetched.filter((entry) => !entry.ok);
+  for (const entry of failed) {
+    console.log(
+      `    ✖ 실패 [${STORE_LABEL[entry.storeId] || entry.storeId}] ${entry.id} (${entry.name}) ${(entry.ms / 1000).toFixed(1)}초 — ${entry.error} · 대신 쓴 값: ${entry.fallback}`
+    );
+  }
+
+  const writeFailed = writes.reduce((sum, [, n]) => sum + n.failed, 0);
+  return { failedLists: failed.length, writeFailed, tried: stats.fetched.length };
+}
+
+// 한 시간마다 지난 한 시간을 한 줄로 묶는다. 로그를 위로 넘겨 보지 않아도
+// "이 시간대에 몇 번 돌았고 몇 번 실패했는지"를 바로 본다.
+const hourly = { rounds: 0, failedRounds: 0, failedLists: 0, writeFailed: 0, maxMs: 0 };
+
+function logHourly(label) {
+  if (!hourly.rounds) {
+    return;
+  }
+
+  console.log(
+    `${stamp()} ■ 지난 1시간(${label}) 회차 ${hourly.rounds} · 실패 회차 ${hourly.failedRounds} · 실패 목록 ${hourly.failedLists} · 저장 실패 ${hourly.writeFailed} · 가장 긴 회차 ${(hourly.maxMs / 1000).toFixed(1)}초`
+  );
+  Object.assign(hourly, { rounds: 0, failedRounds: 0, failedLists: 0, writeFailed: 0, maxMs: 0 });
 }
 
 // 어디서 던져진 것이든 순환을 끝내지 않는다. 기록만 한다.
@@ -87,7 +172,11 @@ function describeResult(result) {
   const foreign = (result.foreignChanged || []).length
     ? ` · 다른 수집기 행 ${result.foreignChanged.length}개 바뀜`
     : "";
-  const action = result.skipped ? "건너뜀" : "스냅샷 다시 씀";
+  const action = result.skipped
+    ? "건너뜀"
+    : server.isDryRun()
+      ? "스냅샷 만듦(dry-run, 저장 안 함)"
+      : "스냅샷 다시 씀";
 
   return `${action}${probe ? ` · ${probe}` : ""}${foreign}`;
 }
@@ -176,6 +265,22 @@ function runRankCheck() {
   }
 }
 
+// 회차가 끝날 때마다 갱신한다. 서점 요청이 어딘가에서 영영 걸려 루프가 멈추면
+// 이 파일이 낡고, 파드의 liveness 검사가 컨테이너를 다시 띄운다.
+function touchAliveFile() {
+  const file = process.env.COLLECT_ALIVE_FILE;
+
+  if (!file) {
+    return;
+  }
+
+  try {
+    fs.writeFileSync(file, `${new Date().toISOString()}\n`);
+  } catch (error) {
+    console.error(`${stamp()} alive 파일을 쓰지 못했다:`, error.message);
+  }
+}
+
 function writeProblems() {
   if (staleWarn) {
     problems.add("마지막 검사에서 데이터가 묵어 있었다.");
@@ -189,18 +294,34 @@ function writeProblems() {
 async function main() {
   await server.ensureEnv();
 
-  const deadline = Number(args.until) > 0 ? Number(args.until) * 1000 : Date.now() + 330 * 60 * 1000;
+  const deadline = args.forever
+    ? Number.POSITIVE_INFINITY
+    : Number(args.until) > 0
+      ? Number(args.until) * 1000
+      : Date.now() + 330 * 60 * 1000;
+  const until = Number.isFinite(deadline) ? `${kst(deadline).slice(11, 16)} KST 까지` : "마감 없음";
+  let round = 0;
+  let lastSummaryHour = new Date(Date.now() + KST_OFFSET_MS).getUTCHours();
   let scope = args["first-scope"] === "all" ? "all" : "realtime";
   let lastAllHour = -1;
   let lastCheckHour = -1;
   let failStreak = 0;
 
   console.log(
-    `${stamp()} 수집기 시작 — ${server.describeCollectRole()} · ${INTERVAL_MS / 60000}분 간격 · ${new Date(deadline).toISOString().slice(11, 16)}Z 까지`
+    `${stamp()} 수집기 시작 — ${server.describeCollectRole()} · ${args.once ? "한 회차만" : `${INTERVAL_MS / 60000}분 간격 · ${until}`}`
   );
+
+  // 첫 회차(전수면 2분쯤)가 끝나기 전에 liveness 가 낡았다고 보지 않게 먼저 한 번 남긴다.
+  touchAliveFile();
 
   for (;;) {
     const hour = new Date().getUTCHours();
+    const kstHour = new Date(Date.now() + KST_OFFSET_MS).getUTCHours();
+
+    if (kstHour !== lastSummaryHour) {
+      logHourly(`${String(lastSummaryHour).padStart(2, "0")}시대`);
+      lastSummaryHour = kstHour;
+    }
 
     // 같은 시간에 두 번 돌지 않는다.
     if (ALL_SCOPE_HOURS.has(hour) && lastAllHour !== hour) {
@@ -208,24 +329,47 @@ async function main() {
       lastAllHour = hour;
     }
 
+    round += 1;
+    const roundStartedAt = Date.now();
+    let roundOk = false;
+    console.log(`${stamp()} ▶ 회차 #${round} 시작 scope=${scope}`);
+    server.takeRoundStats(); // 회차 사이에 쌓인 것은 버리고 이 회차 것만 센다.
+
     // 알라딘을 먼저 받아 둔다. 그래야 바로 뒤의 스냅샷이 이번 회차의 알라딘을 싣는다.
     await collectRemoteRows(scope);
 
     try {
       const result = await server.runCollection({ scope });
+      roundOk = Boolean(result.ok);
       console.log(
-        `${stamp()} scope=${scope.padEnd(8)} ${(result.elapsedMs / 1000 || 0).toFixed(1)}초 · ${describeResult(result)}`
+        `${stamp()} ${roundOk ? "✔" : "✖"} 회차 #${round} ${roundOk ? "끝" : "실패"} scope=${scope} ${(result.elapsedMs / 1000 || 0).toFixed(1)}초 · ${describeResult(result)}`
       );
-      failStreak = result.ok ? 0 : failStreak + 1;
+      failStreak = roundOk ? 0 : failStreak + 1;
     } catch (error) {
       failStreak += 1;
-      console.error(`${stamp()} scope=${scope} 회차 실패:`, error);
+      console.error(`${stamp()} ✖ 회차 #${round} 실패 scope=${scope}:`, error);
     }
+
+    const counted = logRoundStats(server.takeRoundStats());
+    hourly.rounds += 1;
+    hourly.failedRounds += roundOk ? 0 : 1;
+    hourly.failedLists += counted.failedLists;
+    hourly.writeFailed += counted.writeFailed;
+    hourly.maxMs = Math.max(hourly.maxMs, Date.now() - roundStartedAt);
+
+    // 목록 하나가 실패한 것으로는 실행을 빨갛게 하지 않는다. 로그(✖ 실패 줄)와 시간 요약에만
+    // 남긴다 — 서점 한 쪽의 일시적 시간 초과는 흔하고, 다음 회차가 다시 받는다.
 
     // 연속 실패해도 멈추지 않는다. 계속 두드리다 상대가 돌아오면 그 순간 이어서
     // 모은다. 빨간 표시는 마감 때 낸다.
     if (failStreak >= 5) {
       problems.add("수집이 5회 넘게 연속 실패한 적이 있다.");
+    }
+
+    touchAliveFile();
+
+    if (args.once) {
+      break;
     }
 
     if (lastCheckHour !== hour) {
@@ -248,12 +392,14 @@ async function main() {
       break;
     }
 
+    console.log(`    다음  ${kst(next).slice(11, 16)} KST`);
     await sleep(next - now);
   }
 
-  console.log(`${stamp()} 수집기 마감`);
+  logHourly("마감 전까지");
+  console.log(`${stamp()} 수집기 마감 — 회차 ${round}번`);
   writeProblems();
-  process.exit(0);
+  process.exit(args.once && failStreak > 0 ? 1 : 0);
 }
 
 main().catch((error) => {

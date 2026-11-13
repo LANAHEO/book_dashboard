@@ -1,0 +1,162 @@
+name: 수집기 EKS 배포
+
+# 수집기 배포 브랜치(deploy/collector)에 올리면 이미지를 새로 굽고 EKS 의
+# book-collector Deployment 를 갈아 끼운다. main 에 올린다고 배포되지 않는다 —
+# 배포할 커밋을 이 브랜치로 옮겨야(merge/push) 나간다.
+#
+# AWS 액세스 키는 두지 않는다. GitHub OIDC 로 전용 IAM Role 을 잠깐 빌린다
+# (deploy/collector/README.md "AWS 쪽 준비", deploy/collector/setup-aws.sh).
+# 이 리포는 공개라 Role 의 신뢰 정책이 이 리포의 deploy/collector 브랜치 하나만 받는다.
+# 다른 브랜치에서 수동 실행하면 Role 을 못 빌려 실패한다 — 의도한 것이다.
+#
+# 아래 값은 전부 리포 Variables(Settings → Secrets and variables → Actions → Variables)에 둔다.
+#   AWS_REGION             ap-northeast-2
+#   AWS_DEPLOY_ROLE_ARN    arn:aws:iam::<계정>:role/GitHubActions-BookCollector
+#   ECR_REPOSITORY         batch/book-collector
+#   EKS_CLUSTER            ssq-eks
+#   K8S_NAMESPACE          book-collector
+#   SSM_PARAMETER          /book-collector/prod/env  (비우면 이 값)
+#
+# Supabase 키는 GitHub 에 두지 않는다. SSM Parameter Store 의 SecureString 하나에
+# env 파일 내용 그대로(SUPABASE_URL=…, SUPABASE_SERVICE_ROLE_KEY=… 두 줄) 두고, 배포 때마다
+# 통째로 읽어 k8s Secret(book-collector-supabase)으로 맞춘다. 키를 바꾸려면 SSM 값만
+# 고치고 이 워크플로를 수동으로 한 번 돌리면 된다.
+#
+# 위 다섯 값 중 하나라도 비어 있으면 배포하지 않고 초록으로 끝낸다.
+
+on:
+  push:
+    branches: [deploy/collector]
+  # 키만 바꿨을 때 다시 돌린다. 브랜치는 deploy/collector 를 골라야 Role 을 빌린다.
+  workflow_dispatch:
+
+# 배포는 한 번에 하나. 뒤에 온 것이 앞의 것을 기다린다(취소하지 않는다 —
+# 반쯤 갈아 끼운 상태로 남지 않게).
+concurrency:
+  group: deploy-collector
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  # OIDC 토큰을 받으려면 필요하다.
+  id-token: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+      ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+      EKS_CLUSTER: ${{ vars.EKS_CLUSTER }}
+      K8S_NAMESPACE: ${{ vars.K8S_NAMESPACE }}
+      SSM_PARAMETER: ${{ vars.SSM_PARAMETER || '/book-collector/prod/env' }}
+    steps:
+      - name: 설정 확인
+        id: config
+        run: |
+          missing=""
+          for name in AWS_REGION AWS_DEPLOY_ROLE_ARN ECR_REPOSITORY EKS_CLUSTER K8S_NAMESPACE; do
+            [ -z "${!name}" ] && missing="$missing $name"
+          done
+
+          if [ -n "$missing" ]; then
+            echo "::notice::배포 설정이 비어 있어 건너뜁니다:$missing"
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.config.outputs.ready == 'true'
+
+      - name: AWS 자격 증명(OIDC)
+        if: steps.config.outputs.ready == 'true'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: book-collector-deploy
+
+      - name: ECR 로그인
+        if: steps.config.outputs.ready == 'true'
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: 이미지 빌드·푸시
+        if: steps.config.outputs.ready == 'true'
+        id: image
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          image="$REGISTRY/$ECR_REPOSITORY:${GITHUB_SHA::12}"
+          docker build -f deploy/collector/Dockerfile -t "$image" .
+          docker push "$image"
+          echo "ref=$image" >> "$GITHUB_OUTPUT"
+
+      - name: EKS 반영
+        if: steps.config.outputs.ready == 'true'
+        env:
+          IMAGE: ${{ steps.image.outputs.ref }}
+        run: |
+          aws eks update-kubeconfig --name "$EKS_CLUSTER" --region "$AWS_REGION"
+
+          # ── Supabase 시크릿: SSM → k8s Secret ──────────────────────────────
+          # 값은 로그에 찍지 않는다. 마스크를 먼저 걸고, 러너의 임시 파일로만 넘긴다.
+          env_file="$RUNNER_TEMP/supabase.env"
+          trap 'rm -f "$env_file"' EXIT
+          umask 077
+
+          aws ssm get-parameter --name "$SSM_PARAMETER" --with-decryption \
+            --query Parameter.Value --output text > "$env_file"
+
+          # 값마다 마스크를 건다. 파일 내용은 찍지 않는다.
+          while IFS= read -r line; do
+            [ -n "${line#*=}" ] && echo "::add-mask::${line#*=}"
+          done < "$env_file"
+
+          for key in SUPABASE_URL SUPABASE_SERVICE_ROLE_KEY; do
+            if ! grep -q "^$key=." "$env_file"; then
+              echo "::error::SSM $SSM_PARAMETER 에 $key 줄이 없거나 비어 있습니다."
+              exit 1
+            fi
+          done
+
+          secret_result=$(
+            kubectl create secret generic book-collector-supabase \
+              -n "$K8S_NAMESPACE" --from-env-file="$env_file" \
+              --dry-run=client -o yaml |
+            kubectl apply -n "$K8S_NAMESPACE" -f -
+          )
+          echo "$secret_result"
+          rm -f "$env_file"
+
+          # kustomization.yaml 의 images 자리(newName/newTag)에 이번 이미지를 넣는다.
+          # 러너에 kustomize 가 없어도 되도록 sed 로 바꾸고 kubectl 의 -k 로 적용한다.
+          cd deploy/collector/k8s
+          sed -i \
+            -e "s|^\(    newName:\).*|\1 ${IMAGE%:*}|" \
+            -e "s|^\(    newTag:\).*|\1 ${IMAGE##*:}|" \
+            kustomization.yaml
+          kubectl kustomize . | grep -m1 'image:'
+          deploy_result=$(kubectl apply -n "$K8S_NAMESPACE" -k .)
+          echo "$deploy_result"
+
+          # envFrom 은 파드가 뜰 때 한 번만 읽는다. 키만 바뀌고 이미지는 그대로면
+          # Deployment 가 움직이지 않으므로 직접 다시 띄운다.
+          if echo "$secret_result" | grep -q configured \
+            && ! echo "$deploy_result" | grep -q 'deployment.apps/book-collector configured'; then
+            echo "Supabase 시크릿이 바뀌어 파드를 다시 띄운다."
+            kubectl rollout restart -n "$K8S_NAMESPACE" deployment/book-collector
+          fi
+
+          # 파드가 뜨고 liveness 를 넘길 때까지 기다린다. 첫 회차가 전수면 2분쯤 걸린다.
+          kubectl rollout status -n "$K8S_NAMESPACE" deployment/book-collector --timeout=300s
+
+      - name: 첫 회차 로그
+        if: steps.config.outputs.ready == 'true' && always()
+        run: |
+          # 첫 회차가 끝날 시간을 조금 준다. 끝나지 않았어도 지금까지의 로그는 남긴다.
+          sleep 150
+          kubectl logs -n "$K8S_NAMESPACE" deployment/book-collector --tail=60 || true

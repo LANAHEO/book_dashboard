@@ -1,0 +1,72 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: book-collector
+  labels:
+    app.kubernetes.io/name: book-collector
+spec:
+  # 스냅샷을 쓰는 곳은 반드시 하나다(server.js "누가 어느 서점을 모으는가").
+  # 둘이 쓰면 순위 이력이 몇 분 간격으로 두 번 남아 ▲▼ 비교 기준이 엉킨다.
+  replicas: 1
+  # 새 파드를 먼저 띄우고 옛 파드를 끄면(RollingUpdate) 배포 때마다 잠깐 둘이 돈다.
+  # 옛 것을 끈 다음 새 것을 띄운다.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: book-collector
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: book-collector
+    spec:
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: collector
+          # kustomization.yaml 의 images 가 실제 ECR 주소와 태그로 바꾼다.
+          image: book-collector
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: book-collector-config
+            # SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY. SSM Parameter Store 에서 배포 워크플로가
+            # 이 Secret 으로 맞춘다(README "Supabase 키: SSM Parameter Store").
+            - secretRef:
+                name: book-collector-supabase
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 768Mi
+          # 회차마다 /tmp/collector-alive 를 갱신한다(collector.js touchAliveFile).
+          # 15분 넘게 낡았으면 루프가 어딘가에 걸린 것이라 컨테이너를 다시 띄운다.
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - test $(( $(date +%s) - $(stat -c %Y /tmp/collector-alive) )) -lt 900
+            initialDelaySeconds: 60
+            periodSeconds: 60
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: cache
+              mountPath: /app/.cache
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: cache
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
