@@ -58,7 +58,15 @@ const args = parseArgs(process.argv.slice(2));
 const INTERVAL_MS = server.COLLECT_INTERVAL_MINUTES * 60 * 1000;
 const OFFSET_MS = 60 * 1000;
 
-// 일간·주간·월간까지 훑는 전수 수집은 6시간에 한 번(UTC 00·06·12·18시).
+// 일간·주간·월간까지 훑는 전수 수집은 6시간에 한 번(UTC 00·06·12·18시 = 한국 09·15·21·03시).
+//
+// ⚠ 한국 시간 10시대에는 전수 수집을 두지 않는다. admin-v3.1 배치
+// "출판 상품 랭킹 v2 크롤링"이 매일 10:00 에 같은 세 서점의 베스트셀러를 긁는다
+// (보통 7분, 길면 20분 · 실패 서점은 10분 간격 재수집). 이 수집기(EKS)와 admin 배치
+// 서버는 같은 NAT 로 나가서 서점에는 한 IP(54.180.x.x)로 보인다 — 둘이 겹치면 요청이
+// 한 IP 로 몰려 서점이 막을 수 있고, 막히면 둘 다 멈춘다.
+// admin 의 매시 40분 ISBN 보강(9~11시 제외)과도 겹치지 않게 정각 직후에 둔다.
+// 이 값을 바꿀 때는 admin-v3.1 apps/batch/src/modules/publish-rank-v2-schedule 의 시각을 같이 본다.
 const ALL_SCOPE_HOURS = new Set([0, 6, 12, 18]);
 
 // 순위 대조 검사는 서점 페이지를 여러 장 여는 일이라 한 시간에 한 번.
