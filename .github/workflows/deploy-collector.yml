@@ -14,7 +14,7 @@ name: 수집기 EKS 배포
 #   AWS_DEPLOY_ROLE_ARN    arn:aws:iam::<계정>:role/GitHubActions-BookCollector
 #   ECR_REPOSITORY         batch/book-collector
 #   EKS_CLUSTER            ssq-eks
-#   K8S_NAMESPACE          book-collector
+#   K8S_NAMESPACE          external  (외부·배치 시스템 공용. 권한은 deploy/collector/rbac.yaml)
 #   SSM_PARAMETER          /book-collector/prod/env  (비우면 이 값)
 #
 # Supabase 키는 GitHub 에 두지 않는다. SSM Parameter Store 의 SecureString 하나에
@@ -143,11 +143,12 @@ jobs:
           deploy_result=$(kubectl apply -n "$K8S_NAMESPACE" -k .)
           echo "$deploy_result"
 
-          # envFrom 은 파드가 뜰 때 한 번만 읽는다. 키만 바뀌고 이미지는 그대로면
-          # Deployment 가 움직이지 않으므로 직접 다시 띄운다.
-          if echo "$secret_result" | grep -q configured \
+          # envFrom 은 파드가 뜰 때 한 번만 읽는다. 키나 설정(ConfigMap)만 바뀌고 이미지는
+          # 그대로면 Deployment 가 움직이지 않으므로 직접 다시 띄운다.
+          if { echo "$secret_result" | grep -q configured \
+               || echo "$deploy_result" | grep -q 'configmap/book-collector-config configured'; } \
             && ! echo "$deploy_result" | grep -q 'deployment.apps/book-collector configured'; then
-            echo "Supabase 시크릿이 바뀌어 파드를 다시 띄운다."
+            echo "Supabase 키나 수집기 설정이 바뀌어 파드를 다시 띄운다."
             kubectl rollout restart -n "$K8S_NAMESPACE" deployment/book-collector
           fi
 

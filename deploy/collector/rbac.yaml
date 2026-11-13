@@ -1,0 +1,62 @@
+# 배포 Role(GitHubActions-BookCollector)이 external 네임스페이스에서 할 수 있는 일.
+#
+# external 은 외부·배치 시스템을 모아 두는 공용 네임스페이스다. 네임스페이스 전체 편집
+# 권한(AmazonEKSEditPolicy)을 주면 이 공개 리포가 나중에 들어올 다른 서비스까지
+# 고칠 수 있으므로, 수집기 리소스의 이름으로만 묶는다.
+#
+# 이 파일은 워크플로가 아니라 setup-aws.sh 가 관리자 권한으로 적용한다 — 배포 Role 이
+# 자기 권한을 스스로 넓힐 수 없게.
+#
+# 쿠버네티스는 create 에는 이름 제한을 걸 수 없다(만들기 전에는 이름이 없으므로).
+# 그래서 새 리소스를 만드는 것은 막지 못하지만, 이미 있는 다른 서비스의 리소스를
+# 고치거나 지우거나 다른 Secret 을 읽는 것은 막는다.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: book-collector-deployer
+  namespace: external
+rules:
+  # 수집기 Deployment 만 고친다(kubectl apply, rollout restart, rollout status).
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    resourceNames: ["book-collector"]
+    verbs: ["get", "list", "watch", "patch", "update"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["create"]
+
+  # 수집기 설정과 Supabase 키만 읽고 고친다.
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["book-collector-config"]
+    verbs: ["get", "patch", "update"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["book-collector-supabase"]
+    verbs: ["get", "patch", "update"]
+  - apiGroups: [""]
+    resources: ["configmaps", "secrets"]
+    verbs: ["create"]
+
+  # 배포가 끝났는지 보고 첫 회차 로그를 찍는다. 읽기만.
+  - apiGroups: ["apps"]
+    resources: ["replicasets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods", "pods/log", "events"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: book-collector-deployer
+  namespace: external
+subjects:
+  # EKS Access Entry 가 배포 Role 에 붙여 주는 쿠버네티스 그룹(setup-aws.sh).
+  - kind: Group
+    name: book-collector-deployers
+    apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: Role
+  name: book-collector-deployer
+  apiGroup: rbac.authorization.k8s.io

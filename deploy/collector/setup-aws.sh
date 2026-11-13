@@ -10,7 +10,9 @@ set -euo pipefail
 
 REGION="${AWS_REGION:-ap-northeast-2}"
 CLUSTER="${EKS_CLUSTER:-ssq-eks}"
-NAMESPACE="${K8S_NAMESPACE:-book-collector}"
+# 외부·배치 시스템을 모아 두는 공용 네임스페이스. 권한은 rbac.yaml 로 수집기 리소스만.
+NAMESPACE="${K8S_NAMESPACE:-external}"
+K8S_GROUP="book-collector-deployers"
 ECR_REPOSITORY="${ECR_REPOSITORY:-batch/book-collector}"
 ROLE_NAME="${ROLE_NAME:-GitHubActions-BookCollector}"
 # Supabase 키 두 줄(KEY=값)을 env 파일 내용 그대로 SecureString 하나에 둔다.
@@ -119,32 +121,39 @@ JSON
     --policy-document "$permissions"
   echo "권한: ECR(이 리포지토리만) · EKS DescribeCluster · SSM ${SSM_PARAMETER}"
 
-  step "EKS 접근 — $CLUSTER / 네임스페이스 $NAMESPACE 만"
+  step "EKS 접근 — $CLUSTER / $NAMESPACE 안의 수집기 리소스만"
   if aws eks describe-access-entry --region "$REGION" --cluster-name "$CLUSTER" \
       --principal-arn "$ROLE_ARN" >/dev/null 2>&1; then
-    echo "접근 항목 있음"
+    aws eks update-access-entry --region "$REGION" --cluster-name "$CLUSTER" \
+      --principal-arn "$ROLE_ARN" --kubernetes-groups "$K8S_GROUP" >/dev/null
+    echo "접근 항목 있음 — 쿠버네티스 그룹 $K8S_GROUP 로 맞췄다"
   else
     # 방금 만든 Role 은 IAM 전파에 몇 초 걸려 "invalid principal" 이 날 수 있다. 몇 번 다시 한다.
     local attempt
     for attempt in 1 2 3 4 5 6; do
       if aws eks create-access-entry --region "$REGION" --cluster-name "$CLUSTER" \
-          --principal-arn "$ROLE_ARN" >/dev/null 2>&1; then
-        echo "접근 항목 만들었다"
+          --principal-arn "$ROLE_ARN" --kubernetes-groups "$K8S_GROUP" >/dev/null 2>&1; then
+        echo "접근 항목 만들었다 — 쿠버네티스 그룹 $K8S_GROUP"
         break
       fi
       [ "$attempt" -eq 6 ] && { echo "접근 항목을 만들지 못했다" >&2; exit 1; }
       sleep 10
     done
   fi
-  aws eks associate-access-policy --region "$REGION" --cluster-name "$CLUSTER" \
-    --principal-arn "$ROLE_ARN" \
-    --policy-arn arn:aws:eks::aws:cluster-access-policy/AmazonEKSEditPolicy \
-    --access-scope "type=namespace,namespaces=${NAMESPACE}" >/dev/null
-  echo "AmazonEKSEditPolicy — ${NAMESPACE} 네임스페이스로 한정"
 
-  step "네임스페이스 $NAMESPACE"
+  # 예전에 붙였던 네임스페이스 전체 편집 정책(AmazonEKSEditPolicy)은 뗀다. 권한은 아래 RBAC 만.
+  local policy
+  for policy in $(aws eks list-associated-access-policies --region "$REGION" --cluster-name "$CLUSTER" \
+      --principal-arn "$ROLE_ARN" --query 'associatedAccessPolicies[].policyArn' --output text); do
+    aws eks disassociate-access-policy --region "$REGION" --cluster-name "$CLUSTER" \
+      --principal-arn "$ROLE_ARN" --policy-arn "$policy" >/dev/null
+    echo "떼어 냄: ${policy##*/}"
+  done
+
+  step "네임스페이스 $NAMESPACE · RBAC"
   aws eks update-kubeconfig --region "$REGION" --name "$CLUSTER" >/dev/null
   kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
+  sed "s/namespace: external/namespace: $NAMESPACE/" "$ROOT/deploy/collector/rbac.yaml" | kubectl apply -f -
 }
 
 setup_ssm() {

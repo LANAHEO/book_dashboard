@@ -68,7 +68,7 @@ deploy/collector/setup-aws.sh ssm    # .env 의 Supabase 키 → SSM
 | 항목 | 값 |
 |---|---|
 | 클러스터 | `ssq-eks` (ap-northeast-2) |
-| 네임스페이스 | `book-collector` (전용. `prod`에 권한을 주면 이 리포가 prod 전체를 건드릴 수 있다) |
+| 네임스페이스 | `external` (외부·배치 시스템 공용. 권한은 `rbac.yaml`로 수집기 리소스 이름에만 묶는다) |
 | ECR | `batch/book-collector` |
 | IAM Role | `GitHubActions-BookCollector` (기존 `GitHubActionsDeploymentRole`은 권한이 넓어 쓰지 않는다) |
 | SSM | `/book-collector/prod/env` (SecureString 하나에 두 줄) |
@@ -132,17 +132,27 @@ GitHub OIDC 공급자(`token.actions.githubusercontent.com`)가 계정에 이미
 SecureString을 기본 키(`aws/ssm`)로 암호화하면 KMS 권한은 따로 필요 없다.
 고객 관리 키(CMK)를 쓰면 그 키에 대한 `kms:Decrypt`를 더한다.
 
-### 3. EKS Access Entry
+### 3. EKS 접근: external 네임스페이스 + RBAC
 
-위 Role에 수집기 네임스페이스 하나에만 편집 권한을 준다. 클러스터 관리자 권한은 주지 않는다.
+수집기는 외부·배치 시스템 공용 네임스페이스 `external`에 둔다. 네임스페이스 전체 편집
+권한(AmazonEKSEditPolicy)은 주지 않는다. 나중에 들어올 다른 서비스까지 이 공개 리포가
+고칠 수 있게 되기 때문이다. 대신 Access Entry 로 배포 Role 에 쿠버네티스 그룹
+`book-collector-deployers`를 붙이고, `rbac.yaml`이 그 그룹에 수집기 리소스 이름으로만 권한을 준다.
+
+| 할 수 있음 | 못 함 |
+|---|---|
+| `book-collector` Deployment·`book-collector-config`·`book-collector-supabase` 조회·수정 | 다른 서비스 리소스 수정·삭제 |
+| 새 리소스 생성(쿠버네티스가 create 에는 이름 제한을 못 건다) | 다른 Secret 조회·목록 |
+| `external`의 파드·로그·이벤트 읽기 | `prod`·`dev` 등 다른 네임스페이스 접근, RBAC 변경 |
+
+`setup-aws.sh oidc`가 Access Entry·네임스페이스·RBAC 를 전부 맞춘다. RBAC 는 관리자 권한으로
+적용한다 — 배포 Role 이 자기 권한을 스스로 넓힐 수 없게.
+
+권한 확인:
 
 ```bash
-aws eks create-access-entry --cluster-name ssq-eks \
-  --principal-arn arn:aws:iam::<계정>:role/<배포 Role>
-aws eks associate-access-policy --cluster-name ssq-eks \
-  --principal-arn arn:aws:iam::<계정>:role/<배포 Role> \
-  --policy-arn arn:aws:eks::aws:cluster-access-policy/AmazonEKSEditPolicy \
-  --access-scope type=namespace,namespaces=book-collector
+kubectl auth can-i --as=x --as-group=book-collector-deployers patch deployment/book-collector -n external   # yes
+kubectl auth can-i --as=x --as-group=book-collector-deployers get secrets -n prod                          # no
 ```
 
 ### 4. Supabase 키: SSM Parameter Store
@@ -195,15 +205,15 @@ kubectl create namespace book-collector
 | `AWS_DEPLOY_ROLE_ARN` | `arn:aws:iam::<계정>:role/GitHubActions-BookCollector` |
 | `ECR_REPOSITORY` | `batch/book-collector` |
 | `EKS_CLUSTER` | `ssq-eks` |
-| `K8S_NAMESPACE` | `book-collector` |
+| `K8S_NAMESPACE` | `external` |
 | `SSM_PARAMETER` | `/book-collector/prod/env` (비우면 이 값) |
 
 ## 돌고 있는지 보기
 
 ```bash
-kubectl -n book-collector logs deploy/book-collector -f          # 실시간으로 따라 보기
-kubectl -n book-collector logs deploy/book-collector --since=6h | grep -E "✖|■"   # 실패와 시간 요약만
-kubectl -n book-collector logs deploy/book-collector --previous  # 재시작 전 컨테이너 로그
+kubectl -n external logs deploy/book-collector -f          # 실시간으로 따라 보기
+kubectl -n external logs deploy/book-collector --since=6h | grep -E "✖|■"   # 실패와 시간 요약만
+kubectl -n external logs deploy/book-collector --previous  # 재시작 전 컨테이너 로그
 ```
 
 시각은 한국 시간이다. 회차마다 이렇게 찍힌다(실제 출력).
@@ -229,10 +239,13 @@ kubectl -n book-collector logs deploy/book-collector --previous  # 재시작 전
 `▶ 회차`가 10분 넘게 안 보이면 루프가 멈춘 것이다. 15분이 지나면 liveness 검사가
 컨테이너를 다시 띄운다(`/tmp/collector-alive`, `collector.js` `touchAliveFile`).
 
-로그는 지금 `kubectl logs`로만 본다. 클러스터의 fluent-bit 가 `prod`·`dev` 등 정해진
-네임스페이스만 CloudWatch 로 보내고 `book-collector`는 대상이 아니라서, 파드가 바뀌면
-이전 로그는 사라진다. 오래 남기려면 fluent-bit 설정(`amazon-cloudwatch/fluent-bit`)에
-`*_book-collector_*.log`를 더해야 한다(인프라 공용 설정).
+로그는 클러스터 fluent-bit 가 Loki 로 보낸다(`external` 네임스페이스 포함, infra-compose 의
+fluent-bit 설정). Grafana 에서 이렇게 본다.
+
+```
+{namespace="external", container="collector"}
+{namespace="external", container="collector"} |= "✖ 실패"
+```
 
 ## 파드 구성 요약
 
