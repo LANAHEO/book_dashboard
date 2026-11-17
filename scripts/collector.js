@@ -138,6 +138,16 @@ function logRoundStats(stats) {
     console.log(`    저장  ${text}${dry ? "  (dry-run)" : ""}`);
   }
 
+  // 받기는 했는데 서점 목록이 정말로 빈 경우(예: 새벽의 예스24 전집·인물 실시간).
+  // 실패가 아니므로 실패 수에 넣지 않고, 어떤 목록이 비었는지만 한 줄로 남긴다.
+  const empty = stats.fetched.filter((entry) => entry.ok && entry.items === 0);
+  if (empty.length) {
+    const names = empty
+      .map((entry) => `[${STORE_LABEL[entry.storeId] || entry.storeId}] ${entry.name}`)
+      .join(" · ");
+    console.log(`    빈 목록  ${names}  (서점 목록이 비어 있음, 실패 아님)`);
+  }
+
   const failed = stats.fetched.filter((entry) => !entry.ok);
   for (const entry of failed) {
     console.log(

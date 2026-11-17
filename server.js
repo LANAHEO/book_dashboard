@@ -606,7 +606,9 @@ const YES24_CATEGORY_SOURCES = YES24_CATEGORIES.flatMap((category) =>
         fetchYes24List(sourceUrl, {
           limit: RANK_LIMIT,
           // 실시간 페이지만 한 번에 100권을 내려준다.
-          pages: period === "realtime" ? 1 : YES24_PAGES_FOR_100
+          pages: period === "realtime" ? 1 : YES24_PAGES_FOR_100,
+          // 분야별 실시간은 새벽에 정말로 비는 일이 있다(fetchYes24List 참고).
+          allowEmpty: period === "realtime"
         })
     });
   })
@@ -2246,6 +2248,15 @@ async function fetchYes24List(url, options = {}) {
   const perPage = htmlPages.map((html) =>
     html.split(/<li class="[^"]*" data-goods-no="/).slice(1)
   );
+
+  // 분야별 실시간은 "지난 1시간 판매"라 새벽에는 정말로 한 권도 없을 수 있다
+  // (전집·인물이 매일 03~08시에 빈다). 그건 고장이 아니므로 빈 목록으로 돌려준다.
+  // 다만 페이지가 멀쩡하다는 증거가 있을 때만이다 — 목록 칸은 있는데 안이 비었고,
+  // 집계 기준 시각도 적혀 있어야 한다. 그 밖의 빈 첫 쪽은 여전히 실패로 본다.
+  if (options.allowEmpty && perPage[0].length === 0 && isEmptyYes24List(htmlPages[0])) {
+    return { items: [], sourceStamp: parseYes24Stamp(htmlPages[0]), warning: "" };
+  }
+
   assertFirstPageParsed("예스24", url, perPage);
 
   const items = dedupeByRank(perPage.flat().map(mapYes24Block).filter(Boolean)).slice(0, limit);
@@ -2266,6 +2277,24 @@ async function fetchYes24List(url, options = {}) {
     sourceStamp,
     warning: describeRankGap(items, perPage)
   };
+}
+
+// 목록 칸(<ul id="yesBestList">)이 있고, 그 칸이 닫힐 때까지 <li>가 하나도 없으며,
+// 집계 기준 시각이 적혀 있으면 "서점이 빈 목록을 보여 준 것"이다. 차단 페이지·
+// 오류 페이지·없는 분야 응답에는 목록 칸이나 기준 시각이 없다. 마크업이 바뀌어 책
+// 항목을 못 알아보는 경우에도 칸 안에 <li>는 남으므로 여기 걸리지 않는다.
+function isEmptyYes24List(html) {
+  const open = /<ul[^>]*\bid="yesBestList"[^>]*>/.exec(html || "");
+
+  if (!open || !parseYes24Stamp(html)) {
+    return false;
+  }
+
+  const rest = html.slice(open.index + open[0].length);
+  const close = rest.indexOf("</ul>");
+  const inside = close === -1 ? rest : rest.slice(0, close);
+
+  return !/<li[\s>]/i.test(inside);
 }
 
 // 예스24는 순위 기준을 페이지에 직접 적는다. 실시간은 "2026.08.12 11:00 기준",
